@@ -88,7 +88,7 @@ kit.page('racks', function () {
 `;
       const root = document.createElement('div'); root.className = P + 'root';
       const canvasWrap = document.createElement('div'); canvasWrap.className = P + 'canvas';
-      const title = document.createElement('div'); title.className = P + 'title'; title.innerHTML = '<b>Rack floors</b> &nbsp;<span style="color:#8aa0bd">solar layout · racks by row/col · drag to orbit</span>';
+      const title = document.createElement('div'); title.className = P + 'title'; title.innerHTML = '<b>Rack floors</b> &nbsp;<span style="color:#8aa0bd">each planet = a site · racks at row/col · <b style="color:#5ee7ff">drag</b> rotate · <b style="color:#5ee7ff">scroll</b> zoom · <b style="color:#5ee7ff">click a table row</b> to fly there · <b style="color:#ffb347">click a column</b> to sort</span>';
       const legend = document.createElement('div'); legend.className = P + 'legend';
       const side = document.createElement('div'); side.className = P + 'side';
       const tip = document.createElement('div'); tip.className = P + 'tip';
@@ -215,7 +215,7 @@ kit.page('racks', function () {
         if (rackMesh.instanceColor) rackMesh.instanceColor.needsUpdate = true; rackMesh.instanceMatrix.needsUpdate = true; healthyLines.visible = !onlyBroken;
       }
       function sysBounds() { let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9; for (const s of siteInfo.values()) { minX = Math.min(minX, s.cx - s.R); maxX = Math.max(maxX, s.cx + s.R); minZ = Math.min(minZ, s.cz - s.R); maxZ = Math.max(maxZ, s.cz + s.R); } if (!siteInfo.size) { minX = -10; maxX = 10; minZ = -10; maxZ = 10; } return { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, span: Math.max(maxX - minX, maxZ - minZ, 10) }; }
-      function flyTo(center, span) { const dist = Math.max(span * 1.12, 16); const tp = new THREE.Vector3(center.x + dist * 0.5, dist * 0.78, center.z + dist * 0.72); if (reduced) { camera.position.copy(tp); controls.target.set(center.x, 0, center.z); controls.update(); return; } fly.fromP.copy(camera.position); fly.fromT.copy(controls.target); fly.toP.copy(tp); fly.toT.set(center.x, 0, center.z); fly.t = 0; fly.active = true; }
+      function flyTo(center, span) { const dist = Math.max(span * 0.98, 16); const tp = new THREE.Vector3(center.x + dist * 0.5, dist * 0.78, center.z + dist * 0.72); if (reduced) { camera.position.copy(tp); controls.target.set(center.x, 0, center.z); controls.update(); return; } fly.fromP.copy(camera.position); fly.fromT.copy(controls.target); fly.toP.copy(tp); fly.toT.set(center.x, 0, center.z); fly.t = 0; fly.active = true; }
       function fitAll() { const b = sysBounds(); flyTo(new THREE.Vector3(b.cx, 0, b.cz), b.span); }
       function focusSite(code) { if (!code) { fitAll(); return; } const s = siteInfo.get(code); if (s) flyTo(new THREE.Vector3(s.cx, 0, s.cz), Math.max(s.w, s.dep, s.R) * 1.35); }
       function focusRacks(list, fallbackSite) { if (!list || !list.length) { if (fallbackSite) focusSite(fallbackSite); return; } let x = 0, z = 0, mnx = 1e9, mxx = -1e9, mnz = 1e9, mxz = -1e9; list.forEach(d => { const v = pos.get(d.id); x += v.x; z += v.z; mnx = Math.min(mnx, v.x); mxx = Math.max(mxx, v.x); mnz = Math.min(mnz, v.z); mxz = Math.max(mxz, v.z); }); flyTo(new THREE.Vector3(x / list.length, 0, z / list.length), Math.max(mxx - mnx, mxz - mnz, 6) * 1.5 + 4); }
@@ -265,10 +265,10 @@ kit.page('racks', function () {
       function onClick(e) { const id = pick(e); if (id) kit.select(id); }
       renderer.domElement.addEventListener('pointermove', onMove); renderer.domElement.addEventListener('click', onClick);
       kit.onSelect(id => { selectedId = id; if (id) focusDevice(id); else selBox.visible = false; applyColors(); renderTables(); });
-      function resize() { const w = el.clientWidth || root.clientWidth || 800, h = el.clientHeight || root.clientHeight || 600; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+      function resize() { const w = el.clientWidth || root.clientWidth || 800, h = el.clientHeight || root.clientHeight || 600; renderer.setSize(w, h); const pw = w > 900 ? 560 : 0; camera.aspect = (w + pw) / h; camera.setViewOffset(w + pw, h, pw, 0, w, h); camera.updateProjectionMatrix(); }
       const onWin = () => resize(); window.addEventListener('resize', onWin); resize();
       // initial camera instant (all planets visible)
-      (function () { const b = sysBounds(); const dist = Math.max(b.span * 1.12, 16); camera.position.set(b.cx + dist * 0.5, dist * 0.78, b.cz + dist * 0.72); controls.target.set(b.cx, 0, b.cz); controls.update(); })();
+      (function () { const b = sysBounds(); const dist = Math.max(b.span * 0.98, 16); camera.position.set(b.cx + dist * 0.5, dist * 0.78, b.cz + dist * 0.72); controls.target.set(b.cx, 0, b.cz); controls.update(); })();
       applyColors(); if (kit.selected) { selectedId = kit.selected; focusDevice(kit.selected); applyColors(); }
       let raf = 0; const clock = new THREE.Clock();
       function animate() { raf = requestAnimationFrame(animate); const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
