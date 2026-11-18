@@ -49,12 +49,19 @@ kit.page('pods', function () {
 .pd-hint{color:#76756f;font-size:12px;margin-top:6px}.pd-hint kbd,.pd-kbd{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#1b1c1f;border:1px solid #2a2b2f;border-radius:4px;padding:1px 5px;color:#a9a8a2}
 .pd-summary{position:absolute;left:12px;top:92px;z-index:6;color:#a9a8a2;font-size:12px;padding:7px 10px}
 .pd-summary b{color:#f0efec;font-weight:600}
-.pd-legend{position:absolute;left:12px;bottom:12px;z-index:6;padding:10px 12px;width:248px}
+.pd-legend{position:absolute;left:12px;bottom:12px;z-index:6;max-width:240px}
 .pd-legend h4,.pd-detail h4{margin:0 0 8px;font-size:13px;font-weight:600;color:#f0efec}
-.pd-legrow{display:flex;gap:8px;align-items:flex-start;padding:3px 0;color:#a9a8a2;font-size:12px;line-height:1.35}
-.pd-dot{width:10px;height:10px;border-radius:3px;background:#4a4c52;flex:none;margin-top:2px}.pd-dot.part{background:#fab219}.pd-dot.down{background:#d03b3b;height:14px;margin-top:0}.pd-dot.off{background:transparent;border:1px solid #a9a8a2}.pd-dot.sel{background:transparent;border:2px solid #fff;width:8px;height:8px}
-.pd-legrow b{color:#f0efec;font-weight:600}
-.pd-detail{position:absolute;left:12px;bottom:178px;z-index:6;padding:12px;width:300px;max-height:300px;overflow:auto}
+.pd-legpill{display:flex;align-items:center;gap:7px;background:#141518;border:1px solid rgba(255,255,255,.08);border-radius:999px;box-shadow:0 10px 30px rgba(0,0,0,.35);color:#f0efec;font:inherit;font-size:12px;padding:7px 11px;cursor:pointer}
+.pd-legpill:hover{border-color:#7c83ff}.pd-legpill:focus-visible{outline:2px solid #7c83ff;outline-offset:1px}
+.pd-legpill .pd-chev{color:#a9a8a2;transition:transform .15s}.pd-legend.open .pd-chev{transform:rotate(180deg)}
+.pd-legbody{display:none;padding:10px 12px;margin-bottom:8px;max-height:46vh;overflow:auto}
+.pd-legend.open .pd-legbody{display:block}
+.pd-legrow{display:flex;gap:8px;align-items:flex-start;padding:3px 0;color:#a9a8a2;font-size:12px;line-height:1.35;width:100%;background:none;border:none;font:inherit;text-align:left;border-radius:6px}
+button.pd-legrow{cursor:pointer}button.pd-legrow:hover{color:#f0efec}button.pd-legrow.on{background:#1b1c1f;box-shadow:inset 0 0 0 1px #7c83ff}
+.pd-dot{width:10px;height:10px;border-radius:3px;background:#4a4c52;flex:none;margin-top:2px}.pd-dot.part{background:#fab219}.pd-dot.down{background:#d03b3b;height:14px;margin-top:0}.pd-dot.off{background:transparent;border:1px solid #a9a8a2}.pd-dot.sel{background:transparent;border:2px solid #fff;width:8px;height:8px}.pd-dot.super{width:14px;height:7px;margin-top:4px}.pd-dot.spine{width:8px;height:8px;margin-top:3px}
+.pd-line{width:16px;height:0;flex:none;margin-top:7px;border-top:2px solid rgba(255,255,255,.18)}.pd-line.part{border-top-color:#fab219}.pd-line.down{border-top:3px solid #d03b3b}
+.pd-legrow b{color:#f0efec;font-weight:600}.pd-legtot{color:#76756f;font-size:11px;margin:7px 0 0;line-height:1.4}
+.pd-detail{position:absolute;left:12px;bottom:64px;z-index:6;padding:12px;width:300px;max-height:300px;overflow:auto}
 .pd-detail:empty{display:none}
 .pd-detail p{margin:4px 0;color:#a9a8a2;font-size:12px;line-height:1.45}
 .pd-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
@@ -96,14 +103,28 @@ kit.page('pods', function () {
       const crumbs = document.createElement('div'); crumbs.className = P + 'panel ' + P + 'crumbs';
       const summary = document.createElement('div'); summary.className = P + 'panel ' + P + 'summary';
       const detail = document.createElement('div'); detail.className = P + 'panel ' + P + 'detail';
-      const legend = document.createElement('div'); legend.className = P + 'panel ' + P + 'legend';
-      legend.innerHTML = '<h4>Legend</h4>' +
-        '<div class="' + P + 'legrow"><span class="' + P + 'dot"></span><span><b>OK</b> — all links working</span></div>' +
-        '<div class="' + P + 'legrow"><span class="' + P + 'dot part"></span><span><b>Partly down</b> — some links in an uplink are down</span></div>' +
-        '<div class="' + P + 'legrow"><span class="' + P + 'dot down"></span><span><b>Down</b> — an uplink has no working links; taller box</span></div>' +
-        '<div class="' + P + 'legrow"><span class="' + P + 'dot off"></span><span><b>Turned off</b> — drained on purpose; hollow box</span></div>' +
-        '<div class="' + P + 'legrow"><span class="' + P + 'dot sel"></span><span><b>Selected</b> — white outline</span></div>' +
-        '<p class="' + P + 'muted" style="font-size:12px;margin:6px 0 0">Thin amber or red lines are broken links. Gray lines appear in focus.</p>';
+      const legend = document.createElement('div'); legend.className = P + 'legend';
+      let legendOpen = false, statusFilter = null;
+      function renderLegend() {
+        const c = { ok: 0, part: 0, down: 0, off: 0 }; allDevs.forEach(d => { c[statusOf(d).k]++; });
+        const totLinks = linkPairs.length, totBroken = linkPairs.filter(x => x.link.up < x.link.count).length;
+        const row = (k, sw, word, def) => '<button class="' + P + 'legrow' + (statusFilter === k ? ' on' : '') + '" data-status="' + k + '" title="Show only this status"><span class="' + P + 'dot ' + sw + '"></span><span><b>' + word + '</b> — ' + def + '</span></button>';
+        legend.innerHTML = '<div class="' + P + 'panel ' + P + 'legbody"><h4>Legend</h4>' +
+          row('ok', '', 'OK', 'all links working') + row('part', 'part', 'Partly down', 'some links in an uplink are down') + row('down', 'down', 'Down', 'no working links; taller box') + row('off', 'off', 'Turned off', 'drained on purpose; hollow box') +
+          '<div class="' + P + 'legrow"><span class="' + P + 'dot sel"></span><span><b>Selected</b> — white outline</span></div>' +
+          '<div class="' + P + 'legrow"><span class="' + P + 'line"></span><span><b>Link up</b> — faint line between tiers</span></div>' +
+          '<div class="' + P + 'legrow"><span class="' + P + 'line part"></span><span><b>Partly down</b> — some links down</span></div>' +
+          '<div class="' + P + 'legrow"><span class="' + P + 'line down"></span><span><b>Link down</b> — no links working</span></div>' +
+          '<div class="' + P + 'legrow"><span class="' + P + 'dot spine"></span><span><b>Spine</b> — small box, low on its pod</span></div>' +
+          '<div class="' + P + 'legrow"><span class="' + P + 'dot super"></span><span><b>Super-spine</b> — wide box, high by plane</span></div>' +
+          '<p class="' + P + 'legtot">' + allDevs.length + ' devices · ' + c.ok + ' OK · ' + c.part + ' partly down · ' + c.down + ' down · ' + c.off + ' turned off · ' + totBroken + ' of ' + totLinks + ' uplinks broken</p></div>' +
+          '<button class="' + P + 'legpill" aria-expanded="' + legendOpen + '">Legend <span class="' + P + 'chev">▾</span> <span class="' + P + 'kbd">L</span></button>';
+        legend.classList.toggle('open', legendOpen);
+        legend.querySelector('.' + P + 'legpill').onclick = () => setLegend(!legendOpen);
+        legend.querySelectorAll('[data-status]').forEach(b => b.onclick = () => { statusFilter = statusFilter === b.getAttribute('data-status') ? null : b.getAttribute('data-status'); renderLegend(); applyColors(); });
+        detail.style.bottom = (legend.offsetHeight + 24) + 'px';
+      }
+      function setLegend(open) { legendOpen = open && root.clientHeight >= 430; renderLegend(); }
       const side = document.createElement('div'); side.className = P + 'side';
       side.innerHTML = '<h3>Find an answer</h3><div class="' + P + 'finder"></div><div class="' + P + 'tabs"></div><div class="' + P + 'subtitle"></div><div class="' + P + 'filterrow"><input class="' + P + 'filter" type="text" aria-label="Filter table rows" placeholder="Filter rows…  ( / )"><button class="' + P + 'clear" title="Clear filter" aria-label="Clear filter">×</button><span class="' + P + 'count"></span></div><div class="' + P + 'scroll"></div>';
       const tip = document.createElement('div'); tip.className = P + 'tip';
@@ -134,9 +155,11 @@ kit.page('pods', function () {
       for (const s of siteInfo.values()) s.podNums.forEach((p, pi) => podCenter.set(s.code + '|' + p, new THREE.Vector3(s.cx + ((pi % s.cols) - (s.cols - 1) / 2) * 11, 0, s.cz + (Math.floor(pi / s.cols) - (s.rows - 1) / 2) * 10)));
       const groups = new Map();
       spines.forEach(d => { const k = d.site + '|' + d.pod + '|' + d.plane; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); });
-      spines.forEach(d => { const s = siteInfo.get(d.site), c = podCenter.get(d.site + '|' + d.pod) || new THREE.Vector3(s.cx, 0, s.cz); const same = groups.get(d.site + '|' + d.pod + '|' + d.plane); const idx = same.indexOf(d); const pli = s.planeNums.indexOf(d.plane); pos.set(d.id, new THREE.Vector3(c.x + (pli - (s.planeNums.length - 1) / 2) * 2.2, 0.45, c.z + (idx - (same.length - 1) / 2) * 1.5)); });
+      spines.forEach(d => { const s = siteInfo.get(d.site), c = podCenter.get(d.site + '|' + d.pod) || new THREE.Vector3(s.cx, 0, s.cz); const same = groups.get(d.site + '|' + d.pod + '|' + d.plane); const idx = same.indexOf(d); const pli = s.planeNums.indexOf(d.plane); pos.set(d.id, new THREE.Vector3(c.x + (pli - (s.planeNums.length - 1) / 2) * 2.2, 2, c.z + (idx - (same.length - 1) / 2) * 1.5)); });
       const sgroups = new Map(); supers.forEach(d => { const k = d.site + '|' + d.plane; if (!sgroups.has(k)) sgroups.set(k, []); sgroups.get(k).push(d); });
-      supers.forEach(d => { const s = siteInfo.get(d.site); if (!s) { pos.set(d.id, new THREE.Vector3(0, 0.45, 0)); return; } const same = sgroups.get(d.site + '|' + d.plane); const idx = same.indexOf(d); const pli = s.planeNums.indexOf(d.plane); pos.set(d.id, new THREE.Vector3(s.cx + (pli - (s.planeNums.length - 1) / 2) * Math.max(5, s.w / Math.max(1, s.planeNums.length)) + ((idx % 4) - 1.5) * 1.7, 0.5, s.cz - s.dep / 2 + 1.6 + Math.floor(idx / 4) * 1.5)); });
+      supers.forEach(d => { const s = siteInfo.get(d.site); if (!s) { pos.set(d.id, new THREE.Vector3(0, 10, 0)); return; } const same = sgroups.get(d.site + '|' + d.plane); const idx = same.indexOf(d); const pli = s.planeNums.indexOf(d.plane); const perRow = Math.max(1, Math.ceil(Math.sqrt(same.length))); pos.set(d.id, new THREE.Vector3(s.cx + ((idx % perRow) - (perRow - 1) / 2) * 1.9 + (pli - (s.planeNums.length - 1) / 2) * (perRow * 1.9 + 1.5), 9 + pli * 1.6, s.cz + (Math.floor(idx / perRow) - 0.5) * 1.7)); });
+      const ctxDevs = model.devices.filter(d => d.tier === 'border' || d.tier === 'backbone_router');
+      ctxDevs.forEach(d => { const s = siteInfo.get(d.site); if (!s) return; const same = ctxDevs.filter(x => x.site === d.site && x.tier === d.tier); const idx = same.indexOf(d); pos.set(d.id, new THREE.Vector3(s.cx + (idx - (same.length - 1) / 2) * 2.4, d.tier === 'border' ? 16 : 20, s.cz)); });
       // Scene
       const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2)); canvasWrap.appendChild(renderer.domElement);
       const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b0c0e);
@@ -159,6 +182,9 @@ kit.page('pods', function () {
         const disc = new THREE.Mesh(new THREE.CylinderGeometry(s.R, s.R, 0.18, 56), new THREE.MeshStandardMaterial({ color: 0x17181b, roughness: 0.9, metalness: 0 })); disc.position.set(s.cx, -0.09, s.cz); disc.userData.site = s.code; scene.add(disc); deckMeshes.push(disc);
         scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(circlePts(s.cx, s.cz, s.R, 0.02)), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.10 })));
         addLabel(kit.siteName(s.code), new THREE.Vector3(s.cx, 1.2, s.cz - s.dep / 2 - 1.2), 'site', 'site', s.code);
+        for (const pl of s.planeNums) { const ps = supers.filter(d => d.site === s.code && d.plane === pl && pos.get(d.id)); if (ps.length) { const c = ps.reduce((a, d) => a.add(pos.get(d.id)), new THREE.Vector3()).multiplyScalar(1 / ps.length); addLabel('Plane ' + pl, new THREE.Vector3(c.x, c.y + 1.3, c.z), '', 'plane', s.code); } }
+        if (ctxDevs.some(d => d.site === s.code && d.tier === 'border')) addLabel('Border', new THREE.Vector3(s.cx, 17.3, s.cz), 'sun', 'ctx', s.code);
+        if (ctxDevs.some(d => d.site === s.code && d.tier === 'backbone_router')) addLabel('Backbone', new THREE.Vector3(s.cx, 21.3, s.cz), 'sun', 'ctx', s.code);
         for (const p of s.podNums) { const c = podCenter.get(s.code + '|' + p); const w2 = 9.6, d2 = 8.4; const pts = [new THREE.Vector3(c.x - w2 / 2, 0.03, c.z - d2 / 2), new THREE.Vector3(c.x + w2 / 2, 0.03, c.z - d2 / 2), new THREE.Vector3(c.x + w2 / 2, 0.03, c.z + d2 / 2), new THREE.Vector3(c.x - w2 / 2, 0.03, c.z + d2 / 2), new THREE.Vector3(c.x - w2 / 2, 0.03, c.z - d2 / 2)]; scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.10 }))); addLabel('Pod ' + p, new THREE.Vector3(c.x - w2 / 2 + 0.8, 0.4, c.z - d2 / 2 + 0.6), '', 'pod', s.code, p); }
       }
       // Instanced devices: solid + drained wireframe
@@ -169,12 +195,19 @@ kit.page('pods', function () {
       const loc = new Map();
       function fillMesh(mesh, list, isSuperScale) { list.forEach((d, i) => { const v = pos.get(d.id); const st = statusOf(d); dummy.position.copy(v); if (st.k === 'down') dummy.position.y = v.y + 0.25; dummy.rotation.set(0, 0, 0); const sc = d.tier === 'super_spine' ? 1.45 : 1; dummy.scale.set(sc, sc * (st.k === 'down' ? 1.7 : 1), sc); dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix); loc.set(d.id, { mesh, index: i }); }); scene.add(mesh); }
       fillMesh(solidMesh, solidDevs); fillMesh(drainMesh, drainedDevs); solidMesh.count = solidDevs.length; drainMesh.count = drainedDevs.length;
+      const ctxMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 0.6, 1.2), new THREE.MeshStandardMaterial({ color: 0x3a3c42, roughness: 0.8, transparent: true, opacity: 0.75 }), Math.max(1, ctxDevs.length));
+      ctxDevs.forEach((d, i) => { const v = pos.get(d.id); if (!v) return; dummy.position.copy(v); dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(d.tier === 'backbone_router' ? 1.3 : 1.1); dummy.updateMatrix(); ctxMesh.setMatrixAt(i, dummy.matrix); }); ctxMesh.count = ctxDevs.length; scene.add(ctxMesh);
       // Links
-      function lineGroup(pairs, color, opacity) { const pts = []; pairs.forEach(pr => pts.push(pr[0].x, pr[0].y, pr[0].z, pr[1].x, pr[1].y, pr[1].z)); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); const m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity })); scene.add(m); return m; }
+      function lineGroup(pairs, color, opacity, lw) { const pts = []; pairs.forEach(pr => pts.push(pr[0].x, pr[0].y, pr[0].z, pr[1].x, pr[1].y, pr[1].z)); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); const m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity, linewidth: lw || 1 })); scene.add(m); return m; }
       const healthyPairs = [], partPairs = [], fullPairs = [], linkPairs = [];
       spines.forEach(d => { const a = pos.get(d.id); for (const l of kit.uplinks(d.id)) { const other = l.a === d.id ? l.b : l.a; const b = pos.get(other); if (!b) continue; linkPairs.push({ from: d.id, to: other, link: l }); if (l.up === l.count) healthyPairs.push([a, b]); else if (l.up === 0) fullPairs.push([a, b]); else partPairs.push([a, b]); } });
-      const healthyLines = lineGroup(healthyPairs, 0x5b5d63, 0.85); healthyLines.visible = false;
-      lineGroup(partPairs, 0xfab219, 1); lineGroup(fullPairs, 0xd03b3b, 1);
+      const healthyLines = lineGroup(healthyPairs, 0xffffff, 0.07);
+      const partLines = lineGroup(partPairs, 0xfab219, 0.95, 2), fullLines = lineGroup(fullPairs, 0xd03b3b, 1, 2);
+      const ctxPairs = []; ctxDevs.concat(supers).forEach(d => { const a = pos.get(d.id); if (!a) return; for (const l of kit.linksOf(d.id)) { const other = l.a === d.id ? l.b : l.a; const od = byId.get(other); if (!od || !(od.tier === 'border' || od.tier === 'backbone_router')) continue; if (d.tier !== 'super_spine' && d.tier !== 'border') continue; const b = pos.get(other); if (b && a.y < b.y) ctxPairs.push([a, b]); } });
+      const ctxLines = lineGroup(ctxPairs, 0xffffff, 0.05);
+      let focusLines = null;
+      function rebuildFocus() { if (focusLines) { scene.remove(focusLines); focusLines.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); focusLines = null; } const focused = nav.level === 'pod' || nav.level === 'device'; healthyLines.material.opacity = focused ? 0.025 : 0.07; partLines.material.opacity = focused ? 0.25 : 0.95; fullLines.material.opacity = focused ? 0.3 : 1; ctxLines.material.opacity = focused ? 0.02 : 0.05; if (!focused) return; const hp = [], pp = [], fp = []; linkPairs.forEach(x => { const sd = byId.get(x.from); const inPod = nav.level === 'device' ? (x.from === nav.id || x.to === nav.id) : sd && sd.site === nav.site && sd.pod === nav.pod; if (!inPod) return; const pr = [pos.get(x.from), pos.get(x.to)]; if (x.link.up === x.link.count) hp.push(pr); else if (x.link.up === 0) fp.push(pr); else pp.push(pr); }); const g = new THREE.Group(); [[hp, 0xffffff, 0.5, 1], [pp, 0xfab219, 1, 2], [fp, 0xd03b3b, 1, 2]].forEach(([pairs, col, op, lw]) => { if (!pairs.length) return; const pts = []; pairs.forEach(pr => pts.push(pr[0].x, pr[0].y, pr[0].z, pr[1].x, pr[1].y, pr[1].z)); const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); g.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: op, linewidth: lw }))); }); scene.add(g); focusLines = g; }
+      renderLegend();
       const hoverBox = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.6, 1.3, 1.6)), new THREE.LineBasicMaterial({ color: 0xffffff })); hoverBox.visible = false; scene.add(hoverBox);
       const selBox = hoverBox.clone(); selBox.material = new THREE.LineBasicMaterial({ color: 0xffffff }); selBox.visible = false; scene.add(selBox);
       // Nav state
@@ -189,14 +222,14 @@ kit.page('pods', function () {
         return true;
       }
       function applyColors() {
-        allDevs.forEach(d => { const L = loc.get(d.id); if (!L) return; const st = statusOf(d); let col = new THREE.Color(st.k === 'off' ? 0xa9a8a2 : st.color); if (!inScope(d)) col.multiplyScalar(0.15); L.mesh.setColorAt(L.index, col); });
+        allDevs.forEach(d => { const L = loc.get(d.id); if (!L) return; const st = statusOf(d); let col = new THREE.Color(st.k === 'off' ? 0xa9a8a2 : st.color); if (!inScope(d)) col.multiplyScalar(0.15); if (statusFilter && st.k !== statusFilter) col.multiplyScalar(0.08); L.mesh.setColorAt(L.index, col); });
         if (solidMesh.instanceColor) solidMesh.instanceColor.needsUpdate = true; if (drainMesh.instanceColor) drainMesh.instanceColor.needsUpdate = true;
-        healthyLines.visible = nav.level !== 'system';
+        rebuildFocus();
         const sel = nav.level === 'device' ? byId.get(nav.id) : null; if (sel && pos.get(sel.id)) { selBox.position.copy(pos.get(sel.id)); selBox.visible = true; } else selBox.visible = false;
       }
       function sysBounds() { let a = 1e9, b = -1e9, c = 1e9, e = -1e9; for (const s of siteInfo.values()) { a = Math.min(a, s.cx - s.R); b = Math.max(b, s.cx + s.R); c = Math.min(c, s.cz - s.R); e = Math.max(e, s.cz + s.R); } if (!siteInfo.size) { a = -10; b = 10; c = -10; e = 10; } return { cx: (a + b) / 2, cz: (c + e) / 2, span: Math.max(b - a, e - c, 10) }; }
       const fly = { active: false, t: 0, dur: 0.4, fromP: new THREE.Vector3(), toP: new THREE.Vector3(), fromT: new THREE.Vector3(), toT: new THREE.Vector3() };
-      function flyTo(center, span) { const dist = Math.max(span * 0.95, 14); const tp = new THREE.Vector3(center.x + dist * 0.45, dist * 0.85, center.z + dist * 0.62); if (reduced) { camera.position.copy(tp); controls.target.set(center.x, 0, center.z); controls.update(); return; } fly.fromP.copy(camera.position); fly.fromT.copy(controls.target); fly.toP.copy(tp); fly.toT.set(center.x, 0, center.z); fly.t = 0; fly.active = true; }
+      function flyTo(center, span) { const dist = Math.max(span * 1.05, 16); const tp = new THREE.Vector3(center.x + dist * 0.5, 5 + dist * 0.55, center.z + dist * 0.72); if (reduced) { camera.position.copy(tp); controls.target.set(center.x, 5, center.z); controls.update(); return; } fly.fromP.copy(camera.position); fly.fromT.copy(controls.target); fly.toP.copy(tp); fly.toT.set(center.x, 5, center.z); fly.t = 0; fly.active = true; }
       function scopeCounts() { const list = allDevs.filter(inScope); let down = 0, part = 0, off = 0; list.forEach(d => { const k = statusOf(d).k; if (k === 'down') down++; else if (k === 'part') part++; else if (k === 'off') off++; }); return { n: list.length, down, part, off, spines: list.filter(d => d.tier === 'spine').length, supers: list.filter(d => d.tier === 'super_spine').length }; }
       function renderChrome() {
         const crumbsArr = [{ label: 'All sites', nav: { level: 'system', site: null, pod: null, id: null } }];
@@ -263,7 +296,7 @@ kit.page('pods', function () {
         else if (nav.level === 'device') { const v = pos.get(nav.id); if (v) flyTo(v, 11); }
       }
       function goBack() { if (nav.level === 'device') { const d = byId.get(nav.id); if (d && d.pod != null) go({ level: 'pod', site: d.site, pod: d.pod, id: null }); else go({ level: 'site', site: nav.site, pod: null, id: null }); } else if (nav.level === 'pod') go({ level: 'site', site: nav.site, pod: null, id: null }); else if (nav.level === 'site') go({ level: 'system', site: null, pod: null, id: null }); }
-      function updateLabelVis() { labelItems.forEach(it => { it.el.style.display = it.kind === 'sun' ? '' : it.kind === 'site' ? '' : (nav.level === 'site' || nav.level === 'pod' || nav.level === 'device') && (!it.site || it.site === nav.site) ? '' : 'none'; }); }
+      function updateLabelVis() { labelItems.forEach(it => { const scoped = !it.site || !nav.site || it.site === nav.site; it.el.style.display = it.kind === 'sun' ? '' : it.kind === 'site' ? '' : (it.kind === 'plane' || it.kind === 'ctx') ? (scoped ? '' : 'none') : (nav.level === 'site' || nav.level === 'pod' || nav.level === 'device') && scoped ? '' : 'none'; }); }
       renderFinder();
       // Picking / hover
       const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
@@ -272,12 +305,12 @@ kit.page('pods', function () {
       function onMove(e) { userDriftStop = true; const p = pick(e); if (!p) { tip.style.display = 'none'; hoverBox.visible = false; renderer.domElement.style.cursor = ''; return; } const rect = root.getBoundingClientRect(); tip.style.left = Math.min(e.clientX - rect.left + 14, rect.width - 290) + 'px'; tip.style.top = (e.clientY - rect.top + 12) + 'px'; tip.style.display = 'block'; renderer.domElement.style.cursor = 'pointer'; if (typeof p === 'object') { tip.innerHTML = '<b>' + esc(kit.siteName(p.site)) + '</b><br>Site · ' + AGG.pods.filter(x => x.site === p.site).length + ' pods<br><span class="' + P + 'muted">Click to open site</span>'; hoverBox.visible = false; return; } const d = byId.get(p); if (!d) return; hoverId = p; hoverBox.position.copy(pos.get(p)); hoverBox.visible = true; const st = statusOf(d), i = devInfo(d); tip.innerHTML = '<b>' + esc(d.id) + '</b><br><span style="color:' + st.color + '">●</span> ' + st.word + '<br>' + (i ? i.up + ' of ' + i.tot + ' links working' : '') + '<br>' + esc(kit.siteName(d.site)) + (d.pod != null ? ' · Pod ' + d.pod : '') + (d.plane != null ? ' · Plane ' + d.plane : '') + '<br><span class="' + P + 'muted">' + clickHint(d) + '</span>'; }
       function onClick(e) { userDriftStop = true; const p = pick(e); if (!p) return; if (typeof p === 'object') { go({ level: 'site', site: p.site, pod: null, id: null }); return; } const d = byId.get(p); if (!d) return; if (nav.level === 'system') go({ level: 'site', site: d.site, pod: null, id: null }); else if (nav.level === 'site') { if (d.tier === 'spine') go({ level: 'pod', site: d.site, pod: d.pod, id: null }); else go({ level: 'device', site: d.site, pod: d.pod, id: d.id }); } else if (nav.level === 'pod') { if (d.tier === 'spine' && d.pod !== nav.pod) go({ level: 'pod', site: d.site, pod: d.pod, id: null }); else go({ level: 'device', site: d.site, pod: d.pod != null ? d.pod : nav.pod, id: d.id }); } else go({ level: 'device', site: d.site, pod: d.pod, id: d.id }); }
       renderer.domElement.addEventListener('pointermove', onMove); renderer.domElement.addEventListener('click', onClick);
-      function onKey(e) { if (e.key === 'Escape') { if (document.activeElement === filterInput) filterInput.blur(); else goBack(); } else if (e.key === '/' && document.activeElement !== filterInput && !/INPUT|TEXTAREA/.test(document.activeElement && document.activeElement.tagName || '')) { e.preventDefault(); filterInput.focus(); } }
+      function onKey(e) { const typing = /INPUT|TEXTAREA/.test(document.activeElement && document.activeElement.tagName || ''); if ((e.key === 'l' || e.key === 'L') && !typing) { setLegend(!legendOpen); return; } if (e.key === 'Escape') { if (document.activeElement === filterInput) filterInput.blur(); else goBack(); } else if (e.key === '/' && document.activeElement !== filterInput && !typing) { e.preventDefault(); filterInput.focus(); } }
       window.addEventListener('keydown', onKey);
       kit.onSelect(id => { if (suppressSelect || !id) return; const d = byId.get(id); if (d && (d.tier === 'spine' || d.tier === 'super_spine')) go({ level: 'device', site: d.site, pod: d.pod, id }); else if (d && d.pod != null) go({ level: 'pod', site: d.site, pod: d.pod, id: null }); else if (d) go({ level: 'site', site: d.site, pod: null, id: null }); });
-      function resize() { const w = el.clientWidth || root.clientWidth || 800, h = el.clientHeight || root.clientHeight || 600; renderer.setSize(w, h); const pw = w > 700 ? 380 : 0; camera.aspect = (w + pw) / h; camera.setViewOffset(w + pw, h, pw, 0, w, h); camera.updateProjectionMatrix(); }
+      function resize() { const w = el.clientWidth || root.clientWidth || 800, h = el.clientHeight || root.clientHeight || 600; renderer.setSize(w, h); if (h < 430 && legendOpen) setLegend(false); else detail.style.bottom = (legend.offsetHeight + 24) + 'px'; const pw = w > 700 ? 380 : 0; camera.aspect = (w + pw) / h; camera.setViewOffset(w + pw, h, pw, 0, w, h); camera.updateProjectionMatrix(); }
       const onWin = () => resize(); window.addEventListener('resize', onWin); resize();
-      (function () { const b = sysBounds(); const dist = Math.max(b.span * 0.95, 14); camera.position.set(b.cx + dist * 0.45, dist * 0.85, b.cz + dist * 0.62); controls.target.set(b.cx, 0, b.cz); controls.update(); })();
+      (function () { const b = sysBounds(); const dist = Math.max(b.span * 1.05, 16); camera.position.set(b.cx + dist * 0.5, 5 + dist * 0.55, b.cz + dist * 0.72); controls.target.set(b.cx, 5, b.cz); controls.update(); })();
       renderChrome(); renderDetail(); applyColors(); renderTables(); updateLabelVis();
       if (kit.selected) { const d = byId.get(kit.selected); if (d && (d.tier === 'spine' || d.tier === 'super_spine')) { nav = { level: 'device', site: d.site, pod: d.pod, id: d.id }; renderChrome(); renderDetail(); applyColors(); renderTables(); updateLabelVis(); const v = pos.get(d.id); if (v) flyTo(v, 11); } }
       let raf = 0; const clock = new THREE.Clock(); const lastCam = new THREE.Vector3(1e9, 0, 0); const v3 = new THREE.Vector3();
