@@ -13,16 +13,17 @@ kit.page('racks', function () {
 .pg-racks-canvas{position:absolute;inset:0}.pg-racks-canvas canvas{display:block}
 .pg-racks-legend{position:absolute;left:10px;bottom:10px;background:rgba(10,15,26,.88);border:1px solid #26344d;border-radius:10px;padding:9px 11px;font-size:11px;line-height:1.55;z-index:5;backdrop-filter:blur(6px);max-width:230px}
 .pg-racks-legend b{font-size:12px}.pg-racks-sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.pg-racks-side{position:absolute;top:10px;right:10px;bottom:10px;width:352px;background:rgba(10,15,26,.92);border:1px solid #26344d;border-radius:12px;z-index:6;display:flex;flex-direction:column;overflow:hidden;backdrop-filter:blur(8px)}
+.pg-racks-side{position:absolute;top:10px;right:10px;bottom:10px;width:440px;max-width:calc(100% - 20px);background:rgba(10,15,26,.92);border:1px solid #26344d;border-radius:12px;z-index:6;display:flex;flex-direction:column;overflow:hidden;backdrop-filter:blur(8px)}
 .pg-racks-side h3{margin:10px 10px 4px;font-size:12px;color:#9fb6d8;letter-spacing:.04em;text-transform:uppercase}
-.pg-racks-scroll{overflow-y:auto;overflow-x:auto;flex:1;padding:0 8px 10px}
+.pg-racks-scroll{overflow-y:auto;overflow-x:hidden;flex:1;padding:0 6px 10px}
 .pg-racks-btns{display:flex;flex-wrap:wrap;gap:5px;padding:10px 10px 2px}
 .pg-racks-btn{background:#162238;color:#cfe0f5;border:1px solid #2c4066;border-radius:999px;padding:4px 10px;font-size:11px;cursor:pointer}
 .pg-racks-btn.on{background:#2563eb;border-color:#60a5fa;color:#fff}
 .pg-racks-toggle{display:flex;gap:7px;align-items:center;font-size:12px;padding:8px 10px;cursor:pointer}
-.pg-racks-table{border-collapse:collapse;width:100%;font-size:10.5px;white-space:nowrap}
-.pg-racks-table th{position:sticky;top:0;background:#131e33;color:#a9c2e2;cursor:pointer;text-align:left;padding:5px 6px;border-bottom:1px solid #2a3a58;user-select:none}
-.pg-racks-table td{padding:4px 6px;border-bottom:1px solid #1b2942;color:#d5e3f2}
+.pg-racks-table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap;table-layout:auto}
+.pg-racks-table th{position:sticky;top:0;background:#131e33;color:#a9c2e2;cursor:pointer;text-align:left;padding:3px 4px;border-bottom:1px solid #2a3a58;user-select:none;text-decoration:underline;text-underline-offset:2px;text-decoration-color:#3b587f}
+.pg-racks-table th:hover{background:#1d2f4d;color:#e6f0ff;text-decoration-color:#7dd3fc}
+.pg-racks-table td{padding:3px 4px;border-bottom:1px solid #1b2942;color:#d5e3f2}
 .pg-racks-table tr{cursor:pointer}.pg-racks-table tbody tr:hover{background:#1b2c49}.pg-racks-table tr.sel{background:#23406e!important}
 .pg-racks-tip{position:absolute;pointer-events:none;background:rgba(5,10,20,.95);border:1px solid #3b587f;border-radius:8px;padding:7px 9px;font-size:11px;z-index:9;display:none;max-width:260px;line-height:1.5}
 .pg-racks-title{position:absolute;left:10px;top:10px;z-index:5;background:rgba(10,15,26,.82);border:1px solid #26344d;border-radius:10px;padding:8px 11px;font-size:12px}
@@ -45,7 +46,7 @@ kit.page('racks', function () {
       racks.forEach(d => { const i = rackInfo.get(d.id); totBroken += i.broken; totPart += i.part; totFull += i.full; if (d.drained) totDrained++; });
       // legend totals (counts only)
       legend.innerHTML = '<b>Legend</b><br>' +
-        '<span class="' + P + 'sw" style="background:#5b7fa6"></span>rack (tint = pod)<br>' +
+        '<span class="' + P + 'sw" style="background:#334155"></span>healthy rack (dark slate, faint pod tint)<br>' +
         '<span class="' + P + 'sw" style="background:#f59e0b"></span>partly broken uplink<br>' +
         '<span class="' + P + 'sw" style="background:#ef4444"></span>fully broken uplink<br>' +
         '<span class="' + P + 'sw" style="background:#a855f7"></span>drained rack<br>' +
@@ -97,7 +98,7 @@ kit.page('racks', function () {
       const grid = new THREE.GridHelper(Math.max(totalW, 40), 40, 0x1e2d47, 0x141f33); grid.position.y = -0.02; scene.add(grid);
 
       // floors + empty slots
-      const lineMat = new THREE.LineBasicMaterial({ color: 0x3a4f6e, transparent: true, opacity: 0.55 });
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.38 });
       for (const s of siteInfo.values()) {
         const floor = new THREE.Mesh(new THREE.PlaneGeometry(s.w, s.dep), new THREE.MeshStandardMaterial({ color: 0x101a2c, roughness: 1 }));
         floor.rotation.x = -Math.PI / 2; floor.position.set(s.cx, 0, 0); scene.add(floor);
@@ -167,7 +168,7 @@ kit.page('racks', function () {
           if (d.drained) col = new THREE.Color(0xa855f7);
           else if (inf.full > 0) col = new THREE.Color(0xef4444);
           else if (inf.part > 0) col = new THREE.Color(0xf59e0b);
-          else col = (podColor.get(d.pod) || new THREE.Color(0x5b7fa6)).clone();
+          else { col = new THREE.Color(0x334155); const pc = podColor.get(d.pod); if (pc) col.lerp(pc, 0.12); }
           const dimmed = (onlyBroken && inf.broken === 0 && !d.drained) || (highlightPod && !(d.site === highlightPod.site && d.pod === highlightPod.pod)) || (activeSite && d.site !== activeSite);
           if (dimmed) col.multiplyScalar(0.18);
           if (d.id === selectedId) col = new THREE.Color(0xffffff);
@@ -216,7 +217,7 @@ kit.page('racks', function () {
       function buildTable(cols, rows, sortState, onSort, onClick, selTest) {
         const t = document.createElement('table'); t.className = P + 'table';
         const thead = document.createElement('thead'); const hr = document.createElement('tr');
-        cols.forEach(c => { const th = document.createElement('th'); th.textContent = c.label + (sortState.k === c.k ? (sortState.dir > 0 ? ' ▲' : ' ▼') : ''); th.onclick = () => onSort(c.k); hr.appendChild(th); });
+        cols.forEach(c => { const th = document.createElement('th'); th.title = c.title || c.label; th.textContent = c.label + (sortState.k === c.k ? (sortState.dir > 0 ? ' ▲' : ' ▼') : ' ↕'); th.setAttribute('aria-sort', sortState.k === c.k ? (sortState.dir > 0 ? 'ascending' : 'descending') : 'none'); th.onclick = () => onSort(c.k); hr.appendChild(th); });
         thead.appendChild(hr); t.appendChild(thead);
         const tb = document.createElement('tbody');
         rows.forEach(r => { const tr = document.createElement('tr'); if (selTest && selTest(r)) tr.className = 'sel'; cols.forEach(c => { const td = document.createElement('td'); td.textContent = r[c.k]; tr.appendChild(td); }); tr.onclick = () => onClick(r); tb.appendChild(tr); });
@@ -226,18 +227,18 @@ kit.page('racks', function () {
         scroll.innerHTML = '';
         const h1 = document.createElement('h3'); h1.textContent = 'Per pod (click header to sort · click row to highlight pod)'; scroll.appendChild(h1);
         scroll.appendChild(buildTable(
-          [{ k: 'site', label: 'Site' }, { k: 'pod', label: 'Pod' }, { k: 'racks', label: 'Racks' }, { k: 'racksBroken', label: 'Racks w/ broken uplink' }, { k: 'brokenUplinks', label: 'Broken uplinks' }, { k: 'drained', label: 'Drained racks' }],
+          [{ k: 'site', label: 'Site', title: 'Site' }, { k: 'pod', label: 'Pod', title: 'Pod' }, { k: 'racks', label: 'Rks', title: 'Racks' }, { k: 'racksBroken', label: 'BrkRk', title: 'Racks with broken uplink' }, { k: 'brokenUplinks', label: 'Brk', title: 'Broken uplinks' }, { k: 'drained', label: 'Drn', title: 'Drained racks' }],
           sortRows(podRows, podSort), podSort,
-          k => { podSort.dir = podSort.k === k ? -podSort.dir : 1; podSort.k = k; renderTables(); },
+          k => { if (podSort.k === k) podSort.dir = -podSort.dir; else { podSort.k = k; podSort.dir = (podRows.length && typeof podRows[0][k] === 'number') ? -1 : 1; } renderTables(); },
           r => { highlightPod = (highlightPod && highlightPod.site === r.site && highlightPod.pod === r.pod) ? null : { site: r.site, pod: r.pod }; applyColors(); renderTables(); if (highlightPod) focusSite(r.site); },
           r => highlightPod && highlightPod.site === r.site && highlightPod.pod === r.pod));
         const h2 = document.createElement('h3'); h2.textContent = 'Per rack (click header to sort · click row to select)'; scroll.appendChild(h2);
         let rr = onlyBroken ? rackRows.filter(r => r.broken > 0) : rackRows;
         if (activeSite) rr = rr.filter(r => r.site === activeSite);
         scroll.appendChild(buildTable(
-          [{ k: 'id', label: 'Rack' }, { k: 'site', label: 'Site' }, { k: 'pod', label: 'Pod' }, { k: 'row', label: 'Row' }, { k: 'col', label: 'Col' }, { k: 'broken', label: 'Broken uplinks' }, { k: 'drained', label: 'Drained' }],
+          [{ k: 'id', label: 'Rack', title: 'Rack' }, { k: 'site', label: 'Site', title: 'Site' }, { k: 'pod', label: 'Pod', title: 'Pod' }, { k: 'row', label: 'Row', title: 'Row' }, { k: 'col', label: 'Col', title: 'Col' }, { k: 'broken', label: 'Brk', title: 'Broken uplinks' }, { k: 'drained', label: 'Drn', title: 'Drained' }],
           sortRows(rr, rackSort), rackSort,
-          k => { rackSort.dir = rackSort.k === k ? -rackSort.dir : 1; rackSort.k = k; renderTables(); },
+          k => { if (rackSort.k === k) rackSort.dir = -rackSort.dir; else { rackSort.k = k; const sample = (rr[0] || rackRows[0] || {})[k]; rackSort.dir = (typeof sample === 'number') ? -1 : 1; } renderTables(); },
           r => kit.select(r.id),
           r => r.id === selectedId));
       }
