@@ -1,344 +1,225 @@
 kit.page('pods', function () {
-  var cleanup = null;
-  function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
-  function sortKey(v) { return v == null ? '' : v; }
+  function linkStats(links) {
+    let broken = 0, part = 0, full = 0, up = 0, tot = 0;
+    for (const l of (links || [])) { up += l.up; tot += l.count; if (l.up < l.count) broken++; if (l.up === 0) full++; else if (l.up < l.count) part++; }
+    return { uplinks: (links || []).length, broken, part, full, up, tot };
+  }
+  function buildAggregations(model, uplinksFn) {
+    const spines = model.devices.filter(d => d.tier === 'spine');
+    const supers = model.devices.filter(d => d.tier === 'super_spine');
+    const info = new Map(); spines.forEach(d => info.set(d.id, linkStats(uplinksFn(d.id))));
+    const superInfo = new Map(); supers.forEach(d => superInfo.set(d.id, { downlinks: 0, broken: 0, part: 0, full: 0 }));
+    spines.forEach(d => { for (const l of (uplinksFn(d.id) || [])) { const other = l.a === d.id ? l.b : l.a; const s = superInfo.get(other); if (!s) continue; s.downlinks++; if (l.up < l.count) s.broken++; if (l.up === 0) s.full++; else if (l.up < l.count) s.part++; } });
+    const spineRows = spines.map(d => { const i = info.get(d.id); return { id: d.id, site: d.site, pod: d.pod, plane: d.plane, uplinks: i.uplinks, broken: i.broken, part: i.part, full: i.full, drained: d.drained ? 'yes' : 'no' }; });
+    const superRows = supers.map(d => { const i = superInfo.get(d.id); return { id: d.id, site: d.site, plane: d.plane, downlinks: i.downlinks, broken: i.broken, part: i.part, full: i.full, drained: d.drained ? 'yes' : 'no' }; });
+    const podMap = new Map(), planeMap = new Map();
+    for (const d of spines) { const i = info.get(d.id); const pk = d.site + '|' + d.pod; if (!podMap.has(pk)) podMap.set(pk, { site: d.site, pod: d.pod, spines: 0, spinesBroken: 0, broken: 0, part: 0, full: 0, drained: 0 }); const p = podMap.get(pk); p.spines++; if (i.broken > 0) p.spinesBroken++; p.broken += i.broken; p.part += i.part; p.full += i.full; if (d.drained) p.drained++;
+      const lk = d.site + '|' + d.plane; if (!planeMap.has(lk)) planeMap.set(lk, { site: d.site, plane: d.plane, spines: 0, supers: 0, broken: 0, spinesBroken: 0 }); const pl = planeMap.get(lk); pl.spines++; pl.broken += i.broken; if (i.broken > 0) pl.spinesBroken++; }
+    for (const d of supers) { const lk = d.site + '|' + d.plane; if (!planeMap.has(lk)) planeMap.set(lk, { site: d.site, plane: d.plane, spines: 0, supers: 0, broken: 0, spinesBroken: 0 }); planeMap.get(lk).supers++; }
+    const pods = [...podMap.values()], planes = [...planeMap.values()];
+    const bySitePodPlane = (a, b) => String(a.site).localeCompare(String(b.site)) || ((a.pod || 0) - (b.pod || 0)) || ((a.plane || 0) - (b.plane || 0)) || String(a.id || '').localeCompare(String(b.id || ''));
+    spineRows.sort(bySitePodPlane); superRows.sort(bySitePodPlane); pods.sort(bySitePodPlane); planes.sort(bySitePodPlane);
+    return { spines, supers, info, superInfo, spineRows, superRows, pods, planes };
+  }
+  let cleanup = null;
+  function disposePrev() { if (cleanup) { try { cleanup(); } catch (e) {} cleanup = null; } }
   return {
-    mount: function (el, model, kit) {
-      if (cleanup) { try { cleanup(); } catch (e) {} cleanup = null; }
-      el.innerHTML = '';
-      var P = 'pg-pods-';
-      var style = document.createElement('style');
-      style.textContent = [
-        '.' + P + 'wrap{position:relative;width:100%;height:100%;min-height:520px;background:#0b0f17;color:#e6edf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}',
-        '.' + P + 'canvas{position:absolute;inset:0}',
-        '.' + P + 'canvas canvas{display:block}',
-        '.' + P + 'top{position:absolute;left:10px;top:10px;z-index:5;display:flex;flex-wrap:wrap;gap:6px;max-width:55%}',
-        '.' + P + 'btn{background:#162033;color:#c9d6e3;border:1px solid #2a3a52;border-radius:999px;padding:5px 10px;font-size:12px;cursor:pointer}',
-        '.' + P + 'btn.on{background:#2563eb;color:#fff;border-color:#2563eb}',
-        '.' + P + 'legend{position:absolute;left:10px;bottom:10px;z-index:5;background:rgba(10,15,26,.88);border:1px solid #24344d;border-radius:10px;padding:9px 11px;font-size:12px;line-height:1.75;pointer-events:none}',
-        '.' + P + 'sw{display:inline-block;width:18px;height:4px;border-radius:2px;vertical-align:middle;margin-right:7px}',
-        '.' + P + 'dot{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:middle;margin-right:7px}',
-        '.' + P + 'side{position:absolute;right:10px;top:10px;bottom:10px;width:400px;max-width:46%;z-index:6;background:rgba(10,15,26,.92);border:1px solid #24344d;border-radius:12px;padding:10px;overflow-y:auto;overflow-x:hidden;box-sizing:border-box}',
-        '.' + P + 'side h3{margin:8px 0 6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#9fb3c8}',
-        '.' + P + 'side table{width:100%;border-collapse:collapse;font-size:11px}',
-        '.' + P + 'side th{position:sticky;top:0;background:#142038;color:#dbe7f3;text-align:left;padding:5px 4px;cursor:pointer;white-space:nowrap;user-select:none}',
-        '.' + P + 'side td{padding:4px;border-top:1px solid #1c2a42;white-space:nowrap}',
-        '.' + P + 'side tr[data-id]{cursor:pointer}',
-        '.' + P + 'side tr[data-id]:hover td{background:#16263f}',
-        '.' + P + 'side tr.sel td{background:#1d3558}',
-        '.' + P + 'chk{display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer;background:#111c2e;border:1px solid #24344d;border-radius:8px;padding:7px 9px}',
-        '.' + P + 'tip{position:absolute;z-index:9;pointer-events:none;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:7px 9px;font-size:12px;display:none;max-width:280px;box-shadow:0 8px 24px rgba(0,0,0,.5)}',
-        '.' + P + 'empty{color:#64748b;font-size:12px;padding:6px 0}'
-      ].join('\n');
-      el.appendChild(style);
-
-      var wrap = document.createElement('div'); wrap.className = P + 'wrap'; el.appendChild(wrap);
-      var canvasHost = document.createElement('div'); canvasHost.className = P + 'canvas'; wrap.appendChild(canvasHost);
-      var topBar = document.createElement('div'); topBar.className = P + 'top'; wrap.appendChild(topBar);
-      var legend = document.createElement('div'); legend.className = P + 'legend'; wrap.appendChild(legend);
-      var side = document.createElement('div'); side.className = P + 'side'; wrap.appendChild(side);
-      var tip = document.createElement('div'); tip.className = P + 'tip'; wrap.appendChild(tip);
-
-      // ---------- data prep ----------
-      var allSpines = model.devices.filter(function (d) { return d.tier === 'spine'; });
-      var allSupers = model.devices.filter(function (d) { return d.tier === 'super_spine'; });
-      function statsFor(d) {
-        var ups = [];
-        try { ups = kit.uplinks(d.id) || []; } catch (e) { ups = []; }
-        var broken = 0, down = 0;
-        ups.forEach(function (l) { if (l.up < l.count) broken++; down += (l.count - l.up); });
-        return { uplinks: ups.length, broken: broken, down: down, links: ups };
+    aggregations: { linkStats, buildAggregations },
+    resize() { if (cleanup && cleanup.__resize) cleanup.__resize(); },
+    mount(el, model, kit) {
+      disposePrev(); el.innerHTML = '';
+      const P = 'pd-';
+      const C = { healthy: '#2b3644', partly: '#ffb347', fully: '#ff4d6d', drained: '#b48cff', spine: '#7dd3fc', super: '#c4b5fd', accent: '#5ee7ff' };
+      const style = document.createElement('style');
+      style.textContent = `
+.pd-root{position:absolute;inset:0;background:#03040a;color:#dbe7f3;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}
+.pd-canvas{position:absolute;inset:0}.pd-canvas canvas{display:block}
+.pd-legend,.pd-title{position:absolute;z-index:5;background:rgba(10,14,30,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(120,200,255,.25);border-radius:10px;box-shadow:0 0 18px rgba(94,231,255,.12);padding:9px 11px;font-size:11px;line-height:1.55}
+.pd-legend{left:10px;bottom:10px;max-width:250px}.pd-title{left:10px;top:10px;font-size:12px;max-width:calc(100% - 640px)}
+.pd-legend b,.pd-title b{color:#5ee7ff;text-transform:uppercase;letter-spacing:.08em;font-size:11px}
+.pd-sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.pd-side{position:absolute;top:10px;right:10px;bottom:10px;width:600px;max-width:calc(100% - 20px);background:rgba(10,14,30,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(120,200,255,.25);border-radius:10px;box-shadow:0 0 18px rgba(94,231,255,.12);z-index:6;display:flex;flex-direction:column;overflow:hidden}
+.pd-guide{margin:10px 10px 0;background:rgba(94,231,255,.09);border:1px solid rgba(94,231,255,.35);border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.5;color:#e6f4ff;display:flex;gap:8px;align-items:flex-start}
+.pd-guide b{color:#5ee7ff}.pd-guide-x{margin-left:auto;background:none;border:none;color:#9fc6e8;font-size:16px;cursor:pointer;padding:0 2px;line-height:1}
+.pd-subtitle{padding:5px 12px 0;font-size:11.5px;color:#9fc6e8}
+.pd-btn .pd-sname{font-size:13px;font-weight:700;color:#fff}.pd-btn .pd-scode{font-size:10px;color:#9fc6e8;margin-left:4px}.pd-btn.on{box-shadow:0 0 0 2px #5ee7ff,0 0 14px rgba(94,231,255,.55)}
+.pd-clear{background:rgba(22,34,56,.8);color:#cfe0f5;border:1px solid rgba(120,200,255,.3);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:14px;flex:none}
+.pd-side h3{margin:6px 10px 2px;font-size:11px;color:#5ee7ff;letter-spacing:.08em;text-transform:uppercase}
+.pd-btns{display:flex;flex-wrap:wrap;gap:5px;padding:10px 10px 2px}
+.pd-btn{background:rgba(22,34,56,.8);color:#cfe0f5;border:1px solid rgba(120,200,255,.25);border-radius:999px;padding:4px 10px;font-size:11px;cursor:pointer;transition:all .18s}
+.pd-btn:hover{border-color:#5ee7ff;color:#fff}.pd-btn.on{background:rgba(37,99,235,.85);border-color:#5ee7ff;color:#fff}
+.pd-btn:focus-visible,.pd-tab:focus-visible,.pd-filter:focus-visible,.pd-table th:focus-visible{outline:2px solid #5ee7ff;outline-offset:1px}
+.pd-toggle{display:flex;gap:7px;align-items:center;font-size:12px;padding:6px 10px;cursor:pointer}
+.pd-filterrow{display:flex;gap:8px;align-items:center;padding:4px 10px}
+.pd-filter{flex:1;min-width:0;background:rgba(5,10,20,.7);border:1px solid rgba(120,200,255,.3);border-radius:6px;color:#e6f4ff;padding:5px 8px;font-size:12px}
+.pd-count{font-size:11px;color:#9fc6e8;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pd-tabs{display:flex;gap:4px;padding:6px 10px 0;flex-wrap:wrap}
+.pd-tab{background:rgba(22,34,56,.8);color:#a9c2e2;border:1px solid rgba(120,200,255,.25);border-bottom:none;border-radius:7px 7px 0 0;padding:5px 12px;font-size:12px;cursor:pointer;transition:all .18s}
+.pd-tab:hover{color:#fff}.pd-tab.on{background:rgba(94,231,255,.16);color:#5ee7ff;border-color:rgba(120,200,255,.5)}
+.pd-scroll{overflow-y:auto;overflow-x:auto;flex:1;padding:0 6px 10px}
+.pd-table{border-collapse:collapse;width:100%;font-size:13px;white-space:nowrap;table-layout:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.pd-table th{position:sticky;top:0;z-index:2;background:rgba(19,30,51,.97);color:#a9c2e2;cursor:pointer;text-align:left;padding:5px 4px;border-bottom:1px solid rgba(120,200,255,.3);user-select:none;font-family:system-ui,sans-serif;font-size:11px;line-height:1.25;vertical-align:bottom}
+.pd-table th:hover{background:rgba(29,47,77,.97);color:#e6f0ff}.pd-table th.sorted{color:#5ee7ff;background:rgba(94,231,255,.18)}
+.pd-table th.key{box-shadow:inset 0 -3px 0 #5ee7ff;color:#e6f4ff}
+.pd-table th .pd-arrow{font-size:16px;color:#5ee7ff;font-weight:800}
+.pd-table td{padding:3px 4px;height:26px;box-sizing:border-box;border-bottom:1px solid rgba(27,41,66,.8);color:#d5e3f2}
+.pd-table td.key{font-weight:700;color:#fff}
+.pd-table td.sortedcol{background:rgba(94,231,255,.10)}
+.pd-table tbody tr{cursor:pointer;transition:background .18s}.pd-table tbody tr:nth-child(even){background:rgba(255,255,255,.03)}
+.pd-table tbody tr:hover{background:rgba(94,231,255,.14);box-shadow:inset 0 0 8px rgba(94,231,255,.12)}
+.pd-table tbody tr.first{outline:2px solid rgba(94,231,255,.8);outline-offset:-2px;box-shadow:0 0 12px rgba(94,231,255,.65),inset 0 0 10px rgba(94,231,255,.25)}
+.pd-table tr.sel{background:rgba(35,64,110,.9)!important}
+.pd-tip{position:absolute;pointer-events:none;background:rgba(5,10,20,.95);border:1px solid rgba(120,200,255,.4);border-radius:8px;padding:7px 9px;font-size:11px;z-index:9;display:none;max-width:280px;line-height:1.5}
+.pd-hint{position:absolute;left:50%;transform:translateX(-50%);bottom:10px;z-index:5;background:rgba(10,14,30,.72);border:1px solid rgba(120,200,255,.25);border-radius:999px;padding:5px 12px;font-size:11px;color:#9fc6e8;white-space:nowrap}
+`;
+      const root = document.createElement('div'); root.className = P + 'root';
+      const canvasWrap = document.createElement('div'); canvasWrap.className = P + 'canvas';
+      const title = document.createElement('div'); title.className = P + 'title'; title.innerHTML = '<b>Pods &amp; spines</b> &nbsp;<span style="color:#8aa0bd">each planet = a site · pods on deck · super-spines above by plane · <b style="color:#5ee7ff">drag</b> rotate · <b style="color:#5ee7ff">scroll</b> zoom · <b style="color:#5ee7ff">click a table row</b> to fly there · <b style="color:#ffb347">click a column</b> to sort</span>';
+      const legend = document.createElement('div'); legend.className = P + 'legend';
+      const hint = document.createElement('div'); hint.className = P + 'hint'; hint.textContent = 'Click a spine / super-spine to select · click a planet deck to focus its site · Pods/Planes rows highlight in 3D';
+      const side = document.createElement('div'); side.className = P + 'side';
+      const tip = document.createElement('div'); tip.className = P + 'tip';
+      root.append(style, canvasWrap, title, legend, hint, side, tip); el.appendChild(root);
+      const AGG = buildAggregations(model, id => kit.uplinks(id));
+      const spines = AGG.spines, supers = AGG.supers, spineInfo = AGG.info, superInfo = AGG.superInfo, byId = new Map(model.devices.map(d => [d.id, d]));
+      let totBroken = 0, totPart = 0, totFull = 0, totDrained = 0;
+      spines.forEach(d => { const i = spineInfo.get(d.id); totBroken += i.broken; totPart += i.part; totFull += i.full; if (d.drained) totDrained++; });
+      supers.forEach(d => { if (d.drained) totDrained++; });
+      legend.innerHTML = '<b>Legend</b><br>' +
+        '<span class="' + P + 'sw" style="background:' + C.healthy + ';box-shadow:inset 0 0 0 1px rgba(94,231,255,.35)"></span>healthy spine / link (faint)<br>' +
+        '<span class="' + P + 'sw" style="background:' + C.partly + '"></span>partly broken uplink (amber)<br>' +
+        '<span class="' + P + 'sw" style="background:' + C.fully + '"></span>fully broken uplink (red laser)<br>' +
+        '<span class="' + P + 'sw" style="background:' + C.drained + '"></span>drained (violet + ring)<br>' +
+        '<span class="' + P + 'sw" style="background:' + C.spine + '"></span>spine (small satellite)<br>' +
+        '<span class="' + P + 'sw" style="background:' + C.super + '"></span>super-spine (large, above deck)<br>' +
+        '<b style="color:#dbe7f3;text-transform:none;letter-spacing:0">Broken uplinks: ' + totBroken + '</b> · Partly: ' + totPart + '<br>Fully: ' + totFull + ' · Drained: ' + totDrained;
+      const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      const siteCodes = model.sites.map(s => s.code);
+      const siteInfo = new Map(); let maxPlanetR = 6;
+      for (const code of siteCodes) {
+        const sSp = spines.filter(d => d.site === code), sSu = supers.filter(d => d.site === code);
+        const podNums = [...new Set(sSp.map(d => d.pod))].sort((a, b) => a - b);
+        const planeNums = [...new Set(sSp.concat(sSu).map(d => d.plane))].sort((a, b) => a - b);
+        const cols = Math.max(1, Math.ceil(Math.sqrt(podNums.length || 1))), rows = Math.max(1, Math.ceil((podNums.length || 1) / cols));
+        const w = cols * 7, dep = rows * 6, R = Math.sqrt(w * w + dep * dep) / 2 + 1.6; if (R > maxPlanetR) maxPlanetR = R;
+        siteInfo.set(code, { code, podNums, planeNums, cols, rows, w, dep, R, cx: 0, cz: 0 });
       }
-      var spineStats = new Map();
-      allSpines.forEach(function (d) { spineStats.set(d.id, statsFor(d)); });
-
-      var siteCodes = model.sites.map(function (s) { return s.code; });
-      var currentSite = siteCodes.length ? siteCodes[0] : 'ALL';
-      var onlyBroken = false;
-      var selectedId = kit.selected || null;
-      var sortSpine = { key: 'id', dir: 1 };
-      var sortPod = { key: 'pod', dir: 1 };
-
-      // ---------- three ----------
-      var W = Math.max(320, el.clientWidth || 900), H = Math.max(320, el.clientHeight || 600);
-      var renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-      renderer.setSize(W, H);
-      renderer.setClearColor(0x0b0f17, 1);
-      canvasHost.appendChild(renderer.domElement);
-      var scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x0b0f17);
-      scene.fog = new THREE.Fog(0x0b0f17, 120, 260);
-      var camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 1000);
-      var controls = new THREE.OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true; controls.dampingFactor = 0.08;
-      scene.add(new THREE.AmbientLight(0xffffff, 0.75));
-      var dl = new THREE.DirectionalLight(0xffffff, 1.1); dl.position.set(30, 50, 30); scene.add(dl);
-      var grid = new THREE.GridHelper(140, 70, 0x1e3a5f, 0x14243c); grid.position.y = -0.05; scene.add(grid);
-
-      var raycaster = new THREE.Raycaster();
-      var mouse = new THREE.Vector2();
-      var instSpine = null, instSuper = null, lineSeg = null, labelGroup = null, emptyMesh = null;
-      var posById = new Map(), devById = new Map(), spineList = [], superList = [], linkList = [];
-      model.devices.forEach(function (d) { devById.set(d.id, d); });
-      var hoveredId = null, raf = 0, disposed = false;
-      var tierColor = { spine: new THREE.Color(0x38bdf8), super_spine: new THREE.Color(0xa78bfa) };
-      var drainedColor = new THREE.Color(0xd946ef), dimColor = new THREE.Color(0x334155);
-
-      function visibleDevices() {
-        var sp = currentSite === 'ALL' ? allSpines : allSpines.filter(function (d) { return d.site === currentSite; });
-        var su = currentSite === 'ALL' ? allSupers : allSupers.filter(function (d) { return d.site === currentSite; });
-        return { spines: sp, supers: su };
+      siteCodes.forEach((code, i) => { const s = siteInfo.get(code); const ringR = siteCodes.length === 1 ? 0 : (maxPlanetR + 7) + i * (maxPlanetR * 1.55 + 6); const ang = siteCodes.length === 1 ? 0 : -Math.PI / 2 + i * (Math.PI * 2 / siteCodes.length); s.ringR = ringR; s.cx = Math.cos(ang) * ringR; s.cz = Math.sin(ang) * ringR; });
+      const pos = new Map(), podCenter = new Map();
+      for (const s of siteInfo.values()) {
+        s.podNums.forEach((p, pi) => { const cx = s.cx + ((pi % s.cols) - (s.cols - 1) / 2) * 7, cz = s.cz + (Math.floor(pi / s.cols) - (s.rows - 1) / 2) * 6; podCenter.set(s.code + '|' + p, new THREE.Vector3(cx, 0, cz)); });
       }
-      function makeLabel(text, scale) {
-        var c = document.createElement('canvas'); c.width = 256; c.height = 64;
-        var g = c.getContext('2d'); g.fillStyle = 'rgba(11,15,23,0.65)'; g.fillRect(0, 0, 256, 64);
-        g.font = 'bold 26px system-ui,sans-serif'; g.fillStyle = '#e6edf3'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 128, 32);
-        var tex = new THREE.CanvasTexture(c);
-        var m = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
-        var s = new THREE.Sprite(m); s.scale.set(6 * (scale || 1), 1.5 * (scale || 1), 1); return s;
+      spines.forEach(d => { const s = siteInfo.get(d.site), c = podCenter.get(d.site + '|' + d.pod) || new THREE.Vector3(s ? s.cx : 0, 0, s ? s.cz : 0); const pli = s ? s.planeNums.indexOf(d.plane) : 0; const same = spines.filter(x => x.site === d.site && x.pod === d.pod && x.plane === d.plane); const idx = same.indexOf(d); pos.set(d.id, new THREE.Vector3(c.x + (pli - ((s ? s.planeNums.length : 1) - 1) / 2) * 1.15, 0.65 + idx * 0.85, c.z + ((idx % 2) - 0.5) * 0.5)); });
+      supers.forEach(d => { const s = siteInfo.get(d.site); if (!s) { pos.set(d.id, new THREE.Vector3(0, 6, 0)); return; } const pli = s.planeNums.indexOf(d.plane); const same = supers.filter(x => x.site === d.site && x.plane === d.plane); const idx = same.indexOf(d); const gx = s.cx + (pli - (s.planeNums.length - 1) / 2) * Math.max(3, s.w / Math.max(1, s.planeNums.length)); pos.set(d.id, new THREE.Vector3(gx + ((idx % 3) - 1) * 0.9, 5.4 + Math.floor(idx / 3) * 0.7, s.cz - s.dep / 2 + 1 + Math.floor(idx / 3) * 0.4 + (idx % 3) * 0.35)); });
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2)); canvasWrap.appendChild(renderer.domElement);
+      const scene = new THREE.Scene(); scene.background = new THREE.Color(0x03040a);
+      const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 1200);
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      scene.add(new THREE.AmbientLight(0x8899bb, 1.05));
+      const dl = new THREE.DirectionalLight(0xffffff, 1.5); dl.position.set(30, 50, 20); scene.add(dl);
+      const sunLight = new THREE.PointLight(0xffc37d, 2.2, 0, 0); sunLight.position.set(0, 4, 0); scene.add(sunLight);
+      (function () { const cv = document.createElement('canvas'); cv.width = 512; cv.height = 256; const x = cv.getContext('2d'); x.fillStyle = '#03040a'; x.fillRect(0, 0, 512, 256); [['rgba(88,60,180,0.20)', 130, 80, 190], ['rgba(30,90,180,0.18)', 360, 130, 210], ['rgba(20,160,170,0.13)', 250, 190, 170], ['rgba(150,60,160,0.10)', 450, 50, 140]].forEach(g => { const gr = x.createRadialGradient(g[1], g[2], 0, g[1], g[2], g[3]); gr.addColorStop(0, g[0]); gr.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = gr; x.fillRect(0, 0, 512, 256); }); const tx = new THREE.CanvasTexture(cv); scene.add(new THREE.Mesh(new THREE.SphereGeometry(520, 24, 16), new THREE.MeshBasicMaterial({ map: tx, side: THREE.BackSide, depthWrite: false }))); })();
+      let stars = null;
+      (function () { const N = 3200, arr = new Float32Array(N * 3); for (let i = 0; i < N; i++) { const r = 340 + Math.random() * 140, th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1); arr[i * 3] = r * Math.sin(ph) * Math.cos(th); arr[i * 3 + 1] = r * Math.cos(ph) * 0.6; arr[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th); } const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(arr, 3)); stars = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xcfe8ff, size: 1.4, sizeAttenuation: false, transparent: true, opacity: 0.9 })); scene.add(stars); })();
+      function glowTexture() { const cv = document.createElement('canvas'); cv.width = cv.height = 128; const x = cv.getContext('2d'); const g = x.createRadialGradient(64, 64, 0, 64, 64, 64); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,210,140,0.55)'); g.addColorStop(1, 'rgba(255,170,60,0)'); x.fillStyle = g; x.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(cv); }
+      const sun = new THREE.Mesh(new THREE.SphereGeometry(2.1, 24, 16), new THREE.MeshStandardMaterial({ color: 0xffd9a0, emissive: 0xffaa33, emissiveIntensity: 2.2, roughness: 0.4 })); sun.position.set(0, 1.2, 0); scene.add(sun);
+      const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffc37d, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })); sunGlow.scale.set(13, 13, 1); sunGlow.position.copy(sun.position); scene.add(sunGlow);
+      function makeLabel(text, scale, color) { const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64; const ctx = cv.getContext('2d'); ctx.font = 'bold 30px system-ui'; ctx.textAlign = 'center'; ctx.fillStyle = color || '#cfe4ff'; ctx.fillText(text, 128, 42); const tx = new THREE.CanvasTexture(cv); const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tx, transparent: true, depthWrite: false })); sp.scale.set(6 * (scale || 1), 1.5 * (scale || 1), 1); return sp; }
+      const sunLabel = makeLabel(model.name || 'network core', 0.85, '#ffd9a0'); sunLabel.position.set(0, 5.4, 0); scene.add(sunLabel);
+      const ringMats = []; const deckMeshes = [];
+      function circlePts(cx, cz, r, y) { const pts = []; for (let i = 0; i <= 96; i++) { const a = i / 96 * Math.PI * 2; pts.push(new THREE.Vector3(cx + Math.cos(a) * r, y, cz + Math.sin(a) * r)); } return pts; }
+      var deckTex; (function () { const cv = document.createElement('canvas'); cv.width = cv.height = 256; const x = cv.getContext('2d'); x.fillStyle = '#0a1428'; x.fillRect(0, 0, 256, 256); x.strokeStyle = 'rgba(94,231,255,0.10)'; for (let i = 0; i <= 256; i += 32) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 256); x.stroke(); x.beginPath(); x.moveTo(0, i); x.lineTo(256, i); x.stroke(); } deckTex = new THREE.CanvasTexture(cv); })();
+      for (const s of siteInfo.values()) {
+        if (s.ringR > 0) { const m = new THREE.LineBasicMaterial({ color: 0x5ee7ff, transparent: true, opacity: 0.28 }); ringMats.push(m); scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(circlePts(0, 0, s.ringR, 0)), m)); }
+        scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 1.2, 0), new THREE.Vector3(s.cx, 0.4, s.cz)]), new THREE.LineBasicMaterial({ color: 0x5ee7ff, transparent: true, opacity: 0.3 })));
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(s.R, 48), new THREE.MeshStandardMaterial({ color: 0x0d1830, roughness: 0.9, metalness: 0.2, map: deckTex })); disc.rotation.x = -Math.PI / 2; disc.position.set(s.cx, 0, s.cz); scene.add(disc);
+        scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(circlePts(s.cx, s.cz, s.R, 0.04)), new THREE.LineBasicMaterial({ color: 0x5ee7ff, transparent: true, opacity: 0.85 })));
+        const deck = new THREE.Mesh(new THREE.PlaneGeometry(s.w, s.dep), new THREE.MeshStandardMaterial({ color: 0x101c36, roughness: 1, transparent: true, opacity: 0.9 })); deck.rotation.x = -Math.PI / 2; deck.position.set(s.cx, 0.02, s.cz); scene.add(deck);
+        disc.userData.site = s.code; deck.userData.site = s.code; deckMeshes.push(disc, deck);
+        const lab = makeLabel(kit.siteName(s.code) + ' (' + s.code + ')', 1.25, '#5ee7ff'); lab.position.set(s.cx, 7.6, s.cz - s.dep / 2 - 1); scene.add(lab);
+        for (const p of s.podNums) { const c = podCenter.get(s.code + '|' + p); const l2 = makeLabel('pod ' + p, 0.5, '#bfe9ff'); l2.position.set(c.x, 3.2, c.z + 2.2); scene.add(l2); }
+        for (const pl of s.planeNums) { const pli = s.planeNums.indexOf(pl); const gx = s.cx + (pli - (s.planeNums.length - 1) / 2) * Math.max(3, s.w / Math.max(1, s.planeNums.length)); const l3 = makeLabel('plane ' + pl, 0.45, '#ddd6fe'); l3.position.set(gx, 6.9, s.cz - s.dep / 2 + 1); scene.add(l3); }
       }
-      function linkStatus(l) { return l.up === l.count ? 0 : (l.up === 0 ? 2 : 1); }
-
-      function rebuild() {
-        // dispose old
-        [instSpine, instSuper, emptyMesh].forEach(function (m) { if (m) { scene.remove(m); if (m.geometry) m.geometry.dispose(); if (m.material) m.material.dispose(); } });
-        if (lineSeg) { scene.remove(lineSeg); lineSeg.geometry.dispose(); lineSeg.material.dispose(); lineSeg = null; }
-        if (labelGroup) { scene.remove(labelGroup); labelGroup.traverse(function (o) { if (o.material && o.material.map) o.material.map.dispose(); if (o.material) o.material.dispose(); }); }
-        instSpine = instSuper = emptyMesh = null; labelGroup = new THREE.Group(); scene.add(labelGroup);
-        posById.clear();
-        var vis = visibleDevices(); spineList = vis.spines; superList = vis.supers;
-        var pods = Array.from(new Set(spineList.map(function (d) { return String(d.pod); }))).sort(function (a, b) { return cmp(sortKey(a), sortKey(b)) || cmp(a, b); });
-        var planes = Array.from(new Set(spineList.concat(superList).map(function (d) { return String(d.plane); }))).sort(function (a, b) { return cmp(sortKey(a), sortKey(b)) || cmp(a, b); });
-        // group spines
-        var groups = new Map();
-        spineList.forEach(function (d) { var k = String(d.pod) + '|' + String(d.plane); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); });
-        groups.forEach(function (arr) { arr.sort(function (a, b) { return cmp(a.id, b.id); }); });
-        var maxPerGroup = 1; groups.forEach(function (arr) { maxPerGroup = Math.max(maxPerGroup, arr.length); });
-        var podGap = 7, planeGap = 2.6, yGap = 1.7;
-        var totalW = Math.max(1, pods.length) * podGap, totalD = Math.max(1, planes.length) * planeGap;
-        var maxY = maxPerGroup * yGap + 1;
-        spineList.forEach(function (d) {
-          var pi = pods.indexOf(String(d.pod)), pli = planes.indexOf(String(d.plane));
-          var arr = groups.get(String(d.pod) + '|' + String(d.plane)), idx = arr.indexOf(d);
-          posById.set(d.id, new THREE.Vector3(pi * podGap - totalW / 2 + podGap / 2, 0.9 + idx * yGap, pli * planeGap - totalD / 2 + planeGap / 2));
-        });
-        // supers above, grouped by plane, spread along x
-        var superByPlane = new Map();
-        superList.forEach(function (d) { var k = String(d.plane); if (!superByPlane.has(k)) superByPlane.set(k, []); superByPlane.get(k).push(d); });
-        superByPlane.forEach(function (arr) { arr.sort(function (a, b) { return cmp(a.id, b.id); }); });
-        var superY = maxY + 5;
-        superList.forEach(function (d) {
-          var pli = planes.indexOf(String(d.plane)); var arr = superByPlane.get(String(d.plane)); var idx = arr.indexOf(d);
-          var x = arr.length <= 1 ? 0 : (idx / (arr.length - 1) - 0.5) * (totalW * 0.9);
-          posById.set(d.id, new THREE.Vector3(x, superY, pli * planeGap - totalD / 2 + planeGap / 2));
-        });
-        // instanced boxes
-        function buildInst(list, isSuper) {
-          if (!list.length) return null;
-          var geo = new THREE.BoxGeometry(isSuper ? 1.5 : 1.25, 0.95, 1.25);
-          var mat = new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.15, vertexColors: false });
-          var im = new THREE.InstancedMesh(geo, mat, list.length);
-          var m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1, 1, 1);
-          list.forEach(function (d, i) { var p = posById.get(d.id); m4.compose(p, q, sc); im.setMatrixAt(i, m4); im.setColorAt(i, d.drained ? drainedColor : tierColor[d.tier]); });
-          if (im.instanceColor) im.instanceColor.needsUpdate = true;
-          im.userData.ids = list.map(function (d) { return d.id; });
-          scene.add(im); return im;
-        }
-        instSpine = buildInst(spineList, false);
-        instSuper = buildInst(superList, true);
-        // empty slots: pod x plane cells with fewer than maxPerGroup
-        var empties = [];
-        pods.forEach(function (pod) { planes.forEach(function (pl) { var arr = groups.get(pod + '|' + pl) || []; for (var i = arr.length; i < maxPerGroup; i++) empties.push({ pod: pod, plane: pl, idx: i }); }); });
-        if (empties.length) {
-          var eg = new THREE.BoxGeometry(1.25, 0.95, 1.25);
-          var em = new THREE.MeshBasicMaterial({ color: 0x334155, wireframe: true, transparent: true, opacity: 0.35 });
-          emptyMesh = new THREE.InstancedMesh(eg, em, empties.length);
-          var m4e = new THREE.Matrix4();
-          empties.forEach(function (e, i) { var pi = pods.indexOf(e.pod), pli = planes.indexOf(e.plane); m4e.makeTranslation(pi * podGap - totalW / 2 + podGap / 2, 0.9 + e.idx * yGap, pli * planeGap - totalD / 2 + planeGap / 2); emptyMesh.setMatrixAt(i, m4e); });
-          scene.add(emptyMesh);
-        }
-        // labels
-        pods.forEach(function (pod) { var pi = pods.indexOf(pod); var s = makeLabel(pod, 1); s.position.set(pi * podGap - totalW / 2 + podGap / 2, -0.9, totalD / 2 + 1.6); labelGroup.add(s); });
-        planes.forEach(function (pl) { var pli = planes.indexOf(pl); var s = makeLabel('plane ' + pl, 0.75); s.position.set(-totalW / 2 - 3.2, superY, pli * planeGap - totalD / 2 + planeGap / 2); labelGroup.add(s); });
-        var sl = makeLabel('super-spines', 0.9); sl.position.set(0, superY + 1.6, -totalD / 2 - 1.4); labelGroup.add(sl);
-        // links spine->super
-        linkList = [];
-        spineList.forEach(function (d) { (spineStats.get(d.id) || { links: [] }).links.forEach(function (l) { var other = l.a === d.id ? l.b : l.a; if (posById.has(d.id) && posById.has(other)) linkList.push({ link: l, from: d.id, to: other }); }); });
-        var positions = new Float32Array(linkList.length * 6), colors = new Float32Array(linkList.length * 6);
-        linkList.forEach(function (it, i) {
-          var a = posById.get(it.from), b = posById.get(it.to);
-          positions.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6);
-          var st = linkStatus(it.link), col = st === 0 ? new THREE.Color(0x2f7d5a) : st === 1 ? new THREE.Color(0xf59e0b) : new THREE.Color(0xef4444);
-          if (onlyBroken && st === 0) col = new THREE.Color(0x162033);
-          colors.set([col.r, col.g, col.b, col.r, col.g, col.b], i * 6);
-        });
-        var lg = new THREE.BufferGeometry();
-        lg.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        lg.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        lineSeg = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95 }));
-        scene.add(lineSeg);
-        applyDim(); updateLegend(); renderTables(); fitCamera();
+      const dummy = new THREE.Object3D();
+      const spineMesh = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.38), new THREE.MeshStandardMaterial({ roughness: 0.3, emissive: 0x1a4a66 }), Math.max(1, spines.length));
+      const spineIds = []; spines.forEach((d, i) => { dummy.position.copy(pos.get(d.id)); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix(); spineMesh.setMatrixAt(i, dummy.matrix); spineIds.push(d.id); }); scene.add(spineMesh);
+      const superMesh = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.55), new THREE.MeshStandardMaterial({ color: 0xc4b5fd, roughness: 0.3, emissive: 0x3b2a66 }), Math.max(1, supers.length));
+      const superIds = []; supers.forEach((d, i) => { dummy.position.copy(pos.get(d.id)); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix(); superMesh.setMatrixAt(i, dummy.matrix); superIds.push(d.id); }); scene.add(superMesh);
+      const drainedDevs = spines.concat(supers).filter(d => d.drained); let drainMesh = null;
+      if (drainedDevs.length) { drainMesh = new THREE.InstancedMesh(new THREE.TorusGeometry(0.5, 0.05, 8, 20), new THREE.MeshBasicMaterial({ color: 0xb48cff, transparent: true, opacity: 0.9 }), drainedDevs.length); drainedDevs.forEach((d, i) => { const v = pos.get(d.id); dummy.position.set(v.x, v.y + 0.55, v.z); dummy.rotation.set(Math.PI / 2, 0, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix(); drainMesh.setMatrixAt(i, dummy.matrix); }); dummy.rotation.set(0, 0, 0); scene.add(drainMesh); }
+      function lineGroup(pairs, color, opacity) { const pts = []; pairs.forEach(pr => pts.push(pr[0].x, pr[0].y, pr[0].z, pr[1].x, pr[1].y, pr[1].z)); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); const m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity })); scene.add(m); return m; }
+      const healthyPairs = [], partPairs = [], fullPairs = [], brokenCyl = [], linkPairs = [];
+      spines.forEach(d => { const a = pos.get(d.id); for (const l of kit.uplinks(d.id)) { const other = l.a === d.id ? l.b : l.a; const b = pos.get(other); if (!b) continue; linkPairs.push({ from: d.id, to: other, link: l }); if (l.up === l.count) healthyPairs.push([a, b]); else if (l.up === 0) { fullPairs.push([a, b]); brokenCyl.push([a, b, 0xff4d6d]); } else { partPairs.push([a, b]); brokenCyl.push([a, b, 0xffb347]); } } });
+      const healthyLines = lineGroup(healthyPairs, 0x3d5a78, 0.10); const partLines = lineGroup(partPairs, 0xffb347, 0.95); const fullLines = lineGroup(fullPairs, 0xff4d6d, 1);
+      let cylMesh = null;
+      if (brokenCyl.length) { cylMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.045, 0.045, 1, 6), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.92 }), brokenCyl.length); const upv = new THREE.Vector3(0, 1, 0); brokenCyl.forEach((pr, i) => { const dir = new THREE.Vector3().subVectors(pr[1], pr[0]); dummy.position.copy(pr[0]).addScaledVector(dir, 0.5); dummy.quaternion.setFromUnitVectors(upv, dir.clone().normalize()); dummy.scale.set(1, dir.length(), 1); dummy.updateMatrix(); cylMesh.setMatrixAt(i, dummy.matrix); cylMesh.setColorAt(i, new THREE.Color(pr[2])); }); dummy.quaternion.identity(); dummy.scale.set(1, 1, 1); scene.add(cylMesh); }
+      const selBox = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.1), new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.95 })); selBox.visible = false; scene.add(selBox);
+      let onlyBroken = false, highlight = null, selectedId = null, activeSite = null;
+      const fly = { active: false, t: 0, dur: 0.9, fromP: new THREE.Vector3(), toP: new THREE.Vector3(), fromT: new THREE.Vector3(), toT: new THREE.Vector3() };
+      function hlSpine(d) { if (!highlight) return true; if (highlight.type === 'pod') return d.site === highlight.site && d.pod === highlight.pod; if (highlight.type === 'plane') return d.site === highlight.site && d.plane === highlight.plane; if (highlight.type === 'site') return d.site === highlight.site; return true; }
+      function hlSuper(d) { if (!highlight) return true; if (highlight.type === 'pod') return false; if (highlight.type === 'plane') return d.site === highlight.site && d.plane === highlight.plane; if (highlight.type === 'site') return d.site === highlight.site; return true; }
+      function applyColors() {
+        spines.forEach((d, i) => { const inf = spineInfo.get(d.id); let col; if (d.drained) col = new THREE.Color(0xb48cff); else if (inf.full > 0) col = new THREE.Color(0xff4d6d); else if (inf.part > 0) col = new THREE.Color(0xffb347); else col = new THREE.Color(0x7dd3fc); const dim = (onlyBroken && inf.broken === 0 && !d.drained) || !hlSpine(d) || (activeSite && d.site !== activeSite); if (dim) col.multiplyScalar(0.16); if (d.id === selectedId) col = new THREE.Color(0xffffff); spineMesh.setColorAt(i, col); });
+        supers.forEach((d, i) => { const inf = superInfo.get(d.id); let col; if (d.drained) col = new THREE.Color(0xb48cff); else if (inf.full > 0) col = new THREE.Color(0xff4d6d); else if (inf.part > 0) col = new THREE.Color(0xffb347); else col = new THREE.Color(0xc4b5fd); const dim = (onlyBroken && inf.broken === 0 && !d.drained) || !hlSuper(d) || (activeSite && d.site !== activeSite); if (dim) col.multiplyScalar(0.16); if (d.id === selectedId) col = new THREE.Color(0xffffff); superMesh.setColorAt(i, col); });
+        if (spineMesh.instanceColor) spineMesh.instanceColor.needsUpdate = true; if (superMesh.instanceColor) superMesh.instanceColor.needsUpdate = true; healthyLines.visible = !onlyBroken;
       }
-      function applyDim() {
-        [[instSpine, spineList], [instSuper, superList]].forEach(function (pair) {
-          var im = pair[0], list = pair[1]; if (!im) return;
-          list.forEach(function (d, i) {
-            var base = d.drained ? drainedColor : tierColor[d.tier];
-            var isBrokenDev = false;
-            if (d.tier === 'spine') { var s = spineStats.get(d.id); isBrokenDev = s && s.broken > 0; }
-            else { // super: broken if any incident link broken
-              var ls = []; try { ls = kit.linksOf(d.id); } catch (e) {} isBrokenDev = ls.some(function (l) { return l.up < l.count; });
-            }
-            var c = base;
-            if (onlyBroken && !isBrokenDev && !d.drained) c = dimColor;
-            if (d.id === selectedId) c = new THREE.Color(0xffffff);
-            else if (d.id === hoveredId) c = base.clone().lerp(new THREE.Color(0xffffff), 0.45);
-            im.setColorAt(i, c);
-          });
-          if (im.instanceColor) im.instanceColor.needsUpdate = true;
-        });
-        if (lineSeg) { // rebuild colors for filter
-          var colors = lineSeg.geometry.getAttribute('color');
-          linkList.forEach(function (it, i) { var st = linkStatus(it.link); var col = st === 0 ? (onlyBroken ? new THREE.Color(0x111827) : new THREE.Color(0x2f7d5a)) : st === 1 ? new THREE.Color(0xf59e0b) : new THREE.Color(0xef4444); colors.setXYZ(i * 2, col.r, col.g, col.b); colors.setXYZ(i * 2 + 1, col.r, col.g, col.b); });
-          colors.needsUpdate = true;
-          lineSeg.material.opacity = onlyBroken ? 1 : 0.92;
-        }
-      }
-      function fitCamera() {
-        var pts = Array.from(posById.values()); if (!pts.length) { camera.position.set(20, 18, 28); controls.target.set(0, 3, 0); return; }
-        var box = new THREE.Box3(); pts.forEach(function (p) { box.expandByPoint(p); });
-        var center = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
-        var radius = Math.max(size.x, size.y, size.z) * 0.72 + 6;
-        var fov = camera.fov * Math.PI / 180;
-        var dist = radius / Math.sin(fov / 2) * 1.05;
-        camera.position.set(center.x + dist * 0.55, center.y + dist * 0.5, center.z + dist * 0.75);
-        camera.near = Math.max(0.1, dist / 100); camera.far = dist * 8; camera.updateProjectionMatrix();
-        controls.target.copy(center); controls.update();
-      }
-      function focusDevice(id) {
-        var p = posById.get(id); if (!p) return;
-        controls.target.copy(p);
-        var dir = camera.position.clone().sub(controls.target).normalize().multiplyScalar(14);
-        camera.position.copy(p.clone().add(dir).add(new THREE.Vector3(0, 4, 0))); controls.update();
-      }
-      // ---------- legend + totals ----------
-      function updateLegend() {
-        var broken = 0, partly = 0, fully = 0;
-        linkList.forEach(function (it) { var st = linkStatus(it.link); if (st === 1) { partly++; broken++; } if (st === 2) { fully++; broken++; } });
-        var drained = spineList.filter(function (d) { return d.drained; }).length + superList.filter(function (d) { return d.drained; }).length;
-        legend.innerHTML = '<div><span class="' + P + 'sw" style="background:#2f7d5a"></span>Healthy link</div>'
-          + '<div><span class="' + P + 'sw" style="background:#f59e0b"></span>Partly broken link</div>'
-          + '<div><span class="' + P + 'sw" style="background:#ef4444"></span>Fully broken link</div>'
-          + '<div><span class="' + P + 'dot" style="background:#38bdf8"></span>Spine &nbsp;<span class="' + P + 'dot" style="background:#a78bfa"></span>Super-spine</div>'
-          + '<div><span class="' + P + 'dot" style="background:#d946ef"></span>Drained device</div>'
-          + '<div><span class="' + P + 'dot" style="background:transparent;border:1px solid #475569"></span>Empty slot</div>'
-          + '<div style="margin-top:5px;color:#cbd5e1">Broken links: ' + broken + ' &middot; Partly broken: ' + partly + ' &middot; Fully broken: ' + fully + ' &middot; Drained: ' + drained + '</div>';
-      }
-      // ---------- side tables ----------
-      function sortedRows(rows, sort) {
-        return rows.slice().sort(function (a, b) { var av = sortKey(a[sort.key]), bv = sortKey(b[sort.key]); var c = (typeof av === 'number' && typeof bv === 'number') ? av - bv : cmp(String(av), String(bv)); return c * sort.dir; });
-      }
-      function th(label, key, sort, onSort) {
-        var arrow = sort.key === key ? (sort.dir === 1 ? ' ▲' : ' ▼') : '';
-        return '<th data-k="' + key + '">' + label + arrow + '</th>';
-      }
-      function renderTables() {
-        var vis = visibleDevices();
-        var rows = vis.spines.map(function (d) { var s = spineStats.get(d.id); return { id: d.id, site: d.site, pod: sortKey(d.pod), plane: sortKey(d.plane), uplinks: s.uplinks, broken: s.broken, down: s.down, drained: d.drained ? 'yes' : 'no', _d: d }; });
-        if (onlyBroken) rows = rows.filter(function (r) { return r.broken > 0 || r._d.drained; });
-        rows = sortedRows(rows, sortSpine);
-        // per-pod
-        var podMap = new Map();
-        vis.spines.forEach(function (d) { var k = d.site + '|' + String(d.pod); if (!podMap.has(k)) podMap.set(k, { site: d.site, pod: sortKey(d.pod), spines: 0, broken: 0 }); var o = podMap.get(k); o.spines++; o.broken += spineStats.get(d.id).broken; });
-        var podRows = Array.from(podMap.values());
-        if (onlyBroken) podRows = podRows.filter(function (r) { return r.broken > 0; });
-        podRows = sortedRows(podRows, sortPod);
-        var h = '<label class="' + P + 'chk"><input type="checkbox" id="' + P + 'only" ' + (onlyBroken ? 'checked' : '') + '> Show only broken</label>';
-        h += '<h3>Spines (' + rows.length + ')</h3><table><thead><tr>'
-          + th('id', 'id', sortSpine) + th('site', 'site', sortSpine) + th('pod', 'pod', sortSpine) + th('plane', 'plane', sortSpine) + th('uplinks', 'uplinks', sortSpine) + th('broken uplinks', 'broken', sortSpine) + th('down lanes', 'down', sortSpine) + th('drained', 'drained', sortSpine)
-          + '</tr></thead><tbody>';
-        if (!rows.length) h += '<tr><td colspan="8" class="' + P + 'empty">No rows</td></tr>';
-        rows.forEach(function (r) { h += '<tr data-id="' + r.id + '" class="' + (r.id === selectedId ? 'sel' : '') + '"><td>' + r.id + '</td><td>' + r.site + '</td><td>' + r.pod + '</td><td>' + r.plane + '</td><td>' + r.uplinks + '</td><td>' + r.broken + '</td><td>' + r.down + '</td><td>' + r.drained + '</td></tr>'; });
-        h += '</tbody></table><h3>Per pod (' + podRows.length + ')</h3><table><thead><tr>'
-          + th('site', 'site', sortPod) + th('pod', 'pod', sortPod) + th('spines', 'spines', sortPod) + th('broken uplinks', 'broken', sortPod) + '</tr></thead><tbody>';
-        if (!podRows.length) h += '<tr><td colspan="4" class="' + P + 'empty">No rows</td></tr>';
-        podRows.forEach(function (r) { h += '<tr><td>' + r.site + '</td><td>' + r.pod + '</td><td>' + r.spines + '</td><td>' + r.broken + '</td></tr>'; });
-        h += '</tbody></table>';
-        side.innerHTML = h;
-        var chk = side.querySelector('#' + P + 'only');
-        if (chk) chk.addEventListener('change', function () { onlyBroken = chk.checked; applyDim(); renderTables(); });
-        // header sorting: first table = spine, second = pod
-        var tables = side.querySelectorAll('table');
-        if (tables[0]) tables[0].querySelectorAll('th').forEach(function (node) { node.addEventListener('click', function () { var k = node.getAttribute('data-k'); if (sortSpine.key === k) sortSpine.dir *= -1; else { sortSpine.key = k; sortSpine.dir = 1; } renderTables(); }); });
-        if (tables[1]) tables[1].querySelectorAll('th').forEach(function (node) { node.addEventListener('click', function () { var k = node.getAttribute('data-k'); if (sortPod.key === k) sortPod.dir *= -1; else { sortPod.key = k; sortPod.dir = 1; } renderTables(); }); });
-        side.querySelectorAll('tr[data-id]').forEach(function (tr) { tr.addEventListener('click', function () { kit.select(tr.getAttribute('data-id')); }); });
-      }
-      // ---------- site buttons ----------
-      function renderSiteButtons() {
-        topBar.innerHTML = '';
-        var mk = function (label, code) { var b = document.createElement('button'); b.className = P + 'btn' + (currentSite === code ? ' on' : ''); b.textContent = label; b.addEventListener('click', function () { currentSite = code; renderSiteButtons(); rebuild(); }); topBar.appendChild(b); };
-        siteCodes.forEach(function (c) { var s = model.sites.find(function (x) { return x.code === c; }); mk((s ? s.name : c) + ' (' + c + ')', c); });
-        mk('All sites', 'ALL');
-      }
-      // ---------- interaction ----------
-      function pick(ev) {
-        var r = renderer.domElement.getBoundingClientRect();
-        mouse.x = ((ev.clientX - r.left) / r.width) * 2 - 1; mouse.y = -((ev.clientY - r.top) / r.height) * 2 + 1;
-        raycaster.setFromCamera(mouse, camera);
-        var hits = [];
-        if (instSpine) hits = hits.concat(raycaster.intersectObject(instSpine));
-        if (instSuper) hits = hits.concat(raycaster.intersectObject(instSuper));
-        if (!hits.length) return null;
-        hits.sort(function (a, b) { return a.distance - b.distance; });
-        var h = hits[0]; return h.object.userData.ids[h.instanceId];
-      }
-      function onMove(ev) {
-        var id = pick(ev);
-        hoveredId = id;
-        if (id) {
-          var d = devById.get(id); var s = d.tier === 'spine' ? spineStats.get(id) : null;
-          var ls = []; try { ls = kit.linksOf(id); } catch (e) {}
-          var brokenLs = ls.filter(function (l) { return l.up < l.count; }).length;
-          tip.innerHTML = '<b>' + id + '</b><br>tier: ' + d.tier + ' &middot; site: ' + d.site + (d.pod != null ? ' &middot; pod: ' + d.pod : '') + (d.plane != null ? ' &middot; plane: ' + d.plane : '')
-            + '<br>links: ' + ls.length + ' &middot; broken links: ' + brokenLs + (s ? '<br>uplinks: ' + s.uplinks + ' &middot; broken uplinks: ' + s.broken + ' &middot; down lanes: ' + s.down : '') + (d.drained ? '<br>drained: yes' : '');
-          tip.style.display = 'block';
-          var r = wrap.getBoundingClientRect(); tip.style.left = (ev.clientX - r.left + 14) + 'px'; tip.style.top = (ev.clientY - r.top + 10) + 'px';
-          renderer.domElement.style.cursor = 'pointer';
-        } else { tip.style.display = 'none'; renderer.domElement.style.cursor = 'grab'; }
-        applyDim();
-      }
-      function onClick(ev) { var id = pick(ev); if (id) kit.select(id); }
-      renderer.domElement.addEventListener('pointermove', onMove);
-      renderer.domElement.addEventListener('click', onClick);
-      kit.onSelect(function (id) {
-        selectedId = id;
-        var d = id ? devById.get(id) : null;
-        if (d && currentSite !== 'ALL' && d.site !== currentSite) { currentSite = d.site; renderSiteButtons(); rebuild(); }
-        applyDim(); renderTables();
-        if (id && posById.has(id)) focusDevice(id);
-        else if (id && d) { /* device not on this page (e.g. ToR): rebuild already handled site switch if needed */ if (!posById.has(id)) { /* try after rebuild */ if (posById.has(id)) focusDevice(id); } }
-      });
-      function onResize() {
-        var w = Math.max(320, el.clientWidth || wrap.clientWidth || 900), h = Math.max(320, el.clientHeight || wrap.clientHeight || 600);
-        camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
-      }
-      window.addEventListener('resize', onResize);
-      function animate() { if (disposed) return; raf = requestAnimationFrame(animate); var t = performance.now() * 0.004; if (lineSeg) lineSeg.material.opacity = 0.82 + Math.sin(t) * 0.13; controls.update(); renderer.render(scene, camera); }
-      renderSiteButtons(); rebuild();
-      if (selectedId && devById.has(selectedId)) { var sd = devById.get(selectedId); if (currentSite !== 'ALL' && sd.site !== currentSite) { currentSite = sd.site; renderSiteButtons(); rebuild(); } if (posById.has(selectedId)) { applyDim(); focusDevice(selectedId); } }
-      animate();
-      cleanup = function () {
-        disposed = true; cancelAnimationFrame(raf);
-        window.removeEventListener('resize', onResize);
-        renderer.domElement.removeEventListener('pointermove', onMove);
-        renderer.domElement.removeEventListener('click', onClick);
-        controls.dispose(); renderer.dispose();
-        scene.traverse(function (o) { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } });
-        if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+      function sysBounds() { let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9; for (const s of siteInfo.values()) { minX = Math.min(minX, s.cx - s.R); maxX = Math.max(maxX, s.cx + s.R); minZ = Math.min(minZ, s.cz - s.R); maxZ = Math.max(maxZ, s.cz + s.R); } if (!siteInfo.size) { minX = -10; maxX = 10; minZ = -10; maxZ = 10; } return { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, span: Math.max(maxX - minX, maxZ - minZ, 10) }; }
+      function flyTo(center, span) { const dist = Math.max(span * 0.98, 16); const tp = new THREE.Vector3(center.x + dist * 0.5, dist * 0.78, center.z + dist * 0.72); if (reduced) { camera.position.copy(tp); controls.target.set(center.x, 0, center.z); controls.update(); return; } fly.fromP.copy(camera.position); fly.fromT.copy(controls.target); fly.toP.copy(tp); fly.toT.set(center.x, 0, center.z); fly.t = 0; fly.active = true; }
+      function fitAll() { const b = sysBounds(); flyTo(new THREE.Vector3(b.cx, 0, b.cz), b.span); }
+      function focusSite(code) { if (!code) { fitAll(); return; } const s = siteInfo.get(code); if (s) flyTo(new THREE.Vector3(s.cx, 0, s.cz), Math.max(s.w, s.dep, s.R) * 1.35); }
+      function focusDevices(list, fallbackSite) { if (!list || !list.length) { if (fallbackSite) focusSite(fallbackSite); return; } let x = 0, z = 0, mnx = 1e9, mxx = -1e9, mnz = 1e9, mxz = -1e9; list.forEach(d => { const v = pos.get(d.id); if (!v) return; x += v.x; z += v.z; mnx = Math.min(mnx, v.x); mxx = Math.max(mxx, v.x); mnz = Math.min(mnz, v.z); mxz = Math.max(mxz, v.z); }); flyTo(new THREE.Vector3(x / list.length, 2, z / list.length), Math.max(mxx - mnx, mxz - mnz, 6) * 1.5 + 4); }
+      function focusDevice(id) { const v = pos.get(id); if (v) { selBox.position.copy(v); selBox.visible = true; if (reduced) { camera.position.set(v.x + 6, 7, v.z + 8); controls.target.copy(v); controls.update(); } else flyTo(v, 10); return; } const d = byId.get(id); if (d && siteInfo.get(d.site)) focusSite(d.site); }
+      side.innerHTML = ''; let guideHidden = false;
+      const guide = document.createElement('div'); guide.className = P + 'guide'; guide.innerHTML = '<span><b>How to answer:</b> 1 Pick a tab &nbsp;·&nbsp; 2 Click the column the question asks about &nbsp;·&nbsp; 3 Read the top row (click it to see it in 3D)</span>';
+      const guideX = document.createElement('button'); guideX.className = P + 'guide-x'; guideX.textContent = '×'; guideX.title = 'Hide guide'; guideX.onclick = () => { guideHidden = true; guide.style.display = 'none'; }; guide.appendChild(guideX);
+      const btnWrap = document.createElement('div'); btnWrap.className = P + 'btns';
+      const toggleLabel = document.createElement('label'); toggleLabel.className = P + 'toggle'; toggleLabel.innerHTML = '<input type="checkbox"> Show only broken';
+      const filterRow = document.createElement('div'); filterRow.className = P + 'filterrow';
+      const filterInput = document.createElement('input'); filterInput.className = P + 'filter'; filterInput.type = 'text'; filterInput.placeholder = 'Filter: type dc1, pod 3, plane 2…'; filterInput.setAttribute('aria-label', 'Filter table rows');
+      const clearBtn = document.createElement('button'); clearBtn.className = P + 'clear'; clearBtn.textContent = '×'; clearBtn.title = 'Clear filter'; clearBtn.onclick = () => { filterInput.value = ''; renderTables(); filterInput.focus(); };
+      const countEl = document.createElement('span'); countEl.className = P + 'count'; filterRow.append(filterInput, clearBtn, countEl);
+      const tabBar = document.createElement('div'); tabBar.className = P + 'tabs'; const subtitle = document.createElement('div'); subtitle.className = P + 'subtitle'; const scroll = document.createElement('div'); scroll.className = P + 'scroll';
+      side.append(guide, btnWrap, toggleLabel, filterRow, tabBar, subtitle, scroll);
+      filterInput.addEventListener('input', () => renderTables());
+      toggleLabel.querySelector('input').addEventListener('change', e => { onlyBroken = e.target.checked; applyColors(); renderTables(); });
+      function renderSiteBtns() { btnWrap.innerHTML = ''; const mk = (code) => { const b = document.createElement('button'); b.className = P + 'btn' + (activeSite === code ? ' on' : ''); b.innerHTML = code ? '<span class="' + P + 'sname">' + kit.siteName(code) + '</span><span class="' + P + 'scode">' + code + '</span>' : '<span class="' + P + 'sname">All sites</span>'; b.onclick = () => { activeSite = code; renderSiteBtns(); applyColors(); focusSite(code); renderTables(); }; btnWrap.appendChild(b); }; mk(null); siteCodes.forEach(c => mk(c)); const rb = document.createElement('button'); rb.className = P + 'btn'; rb.textContent = 'Reset view'; rb.onclick = () => { activeSite = null; highlight = null; renderSiteBtns(); applyColors(); fitAll(); renderTables(); }; btnWrap.appendChild(rb); }
+      renderSiteBtns();
+      let activeTab = 'spines';
+      const sorts = { spines: { k: 'site', dir: 1, def: true }, pods: { k: 'site', dir: 1, def: true }, planes: { k: 'site', dir: 1, def: true }, supers: { k: 'site', dir: 1, def: true } };
+      const COLS = {
+        spines: [{ k: 'id', label: 'Spine', title: 'Unique spine identifier.' }, { k: 'site', label: 'Site', title: 'Site (planet) for this spine.' }, { k: 'pod', label: 'Pod', title: 'Pod number within the site.' }, { k: 'plane', label: 'Plane', title: 'Plane number for this spine.' }, { k: 'broken', label: 'Broken<br>uplinks', title: 'Uplinks (links to a super-spine) where up < count.', key: 1 }, { k: 'uplinks', label: 'Uplinks', title: 'Total uplinks from this spine to super-spines.' }, { k: 'part', label: '…partly<br>broken', title: 'Uplinks where some, but not all, parallel links are up (0 < up < count).' }, { k: 'full', label: '…fully<br>broken', title: 'Uplinks where up is 0.' }, { k: 'drained', label: 'Drained', title: 'Whether this spine is drained (out of service on purpose).' }],
+        pods: [{ k: 'site', label: 'Site', title: 'Site (planet) for this pod.' }, { k: 'pod', label: 'Pod', title: 'Pod number within the site.' }, { k: 'spinesBroken', label: 'Spines w/<br>broken uplink', title: 'Spines in this pod with at least one uplink where up < count.', key: 1 }, { k: 'spines', label: 'Spines', title: 'Total spines in this pod.' }, { k: 'broken', label: 'Broken<br>uplinks', title: 'Total uplinks in this pod where up < count.' }, { k: 'part', label: '…partly<br>broken', title: 'Uplinks in this pod where 0 < up < count.' }, { k: 'full', label: '…fully<br>broken', title: 'Uplinks in this pod where up is 0.' }, { k: 'drained', label: 'Drained<br>spines', title: 'Spines in this pod marked drained.' }],
+        planes: [{ k: 'site', label: 'Site', title: 'Site (planet) for this plane.' }, { k: 'plane', label: 'Plane', title: 'Plane number within the site.' }, { k: 'broken', label: 'Broken<br>uplinks', title: 'Total spine uplinks in this plane where up < count.', key: 1 }, { k: 'spines', label: 'Spines', title: 'Total spines in this plane.' }, { k: 'supers', label: 'Super-<br>spines', title: 'Total super-spines in this plane.' }, { k: 'spinesBroken', label: 'Spines w/<br>broken uplink', title: 'Spines in this plane with at least one broken uplink.' }],
+        supers: [{ k: 'id', label: 'Super-spine', title: 'Unique super-spine identifier.' }, { k: 'site', label: 'Site', title: 'Site (planet) for this super-spine.' }, { k: 'plane', label: 'Plane', title: 'Plane number for this super-spine.' }, { k: 'broken', label: 'Broken<br>downlinks', title: 'Downlinks from spines where up < count.', key: 1 }, { k: 'downlinks', label: 'Downlinks<br>from spines', title: 'Total links from spines up to this super-spine.' }, { k: 'part', label: '…partly<br>broken', title: 'Downlinks where 0 < up < count.' }, { k: 'full', label: '…fully<br>broken', title: 'Downlinks where up is 0.' }, { k: 'drained', label: 'Drained', title: 'Whether this super-spine is drained.' }]
       };
-      this._pgPodsCleanup = cleanup;
-    },
-    resize: function () { window.dispatchEvent(new Event('resize')); }
+      function tabRows(tab) { let rows = tab === 'spines' ? AGG.spineRows : tab === 'pods' ? AGG.pods : tab === 'planes' ? AGG.planes : AGG.superRows; if (activeSite) rows = rows.filter(r => r.site === activeSite); if (onlyBroken) rows = tab === 'spines' || tab === 'supers' ? rows.filter(r => r.broken > 0) : rows.filter(r => (r.broken || 0) > 0); const q = filterInput.value.trim().toLowerCase(); if (q) rows = rows.filter(r => COLS[tab].map(c => String(r[c.k])).join(' ').toLowerCase().includes(q) || ('pod ' + (r.pod != null ? r.pod : '')).includes(q) || ('plane ' + (r.plane != null ? r.plane : '')).includes(q)); return rows; }
+      function sortRows(rows, tab) { const s = sorts[tab]; const out = [...rows]; if (s.def) out.sort((a, b) => String(a.site || '').localeCompare(String(b.site || '')) || ((a.pod || 0) - (b.pod || 0)) || ((a.plane || 0) - (b.plane || 0)) || String(a.id || '').localeCompare(String(b.id || ''))); else out.sort((a, b) => { const x = a[s.k], y = b[s.k]; const cmp = (typeof x === 'number' && typeof y === 'number') ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true }); return cmp * s.dir || String(a.site || a.id || '').localeCompare(String(b.site || b.id || '')); }); return out; }
+      function onHeader(tab, k) { const s = sorts[tab]; if (!s.def && s.k === k) s.dir = -s.dir; else { const rows = tabRows(tab); const sample = rows.length ? rows[0][k] : null; s.k = k; s.def = false; s.dir = (typeof sample === 'number') ? -1 : 1; } renderTables(); }
+      function buildTable(tab, rows) { const cols = COLS[tab], s = sorts[tab]; const t = document.createElement('table'); t.className = P + 'table'; const thead = document.createElement('thead'); const hr = document.createElement('tr'); cols.forEach(c => { const th = document.createElement('th'); th.title = c.title || c.label.replace(/<br>/g, ' '); th.tabIndex = 0; const sorted = !s.def && s.k === c.k; if (sorted) th.className = 'sorted'; if (c.key) th.className = (th.className ? th.className + ' ' : '') + 'key'; th.innerHTML = c.label + (sorted ? ' <span class="' + P + 'arrow">' + (s.dir < 0 ? '▼' : '▲') + '</span>' : ''); th.onclick = () => onHeader(tab, c.k); th.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onHeader(tab, c.k); } }; hr.appendChild(th); }); thead.appendChild(hr); t.appendChild(thead); const tb = document.createElement('tbody'); rows.forEach((r, ri) => { const tr = document.createElement('tr'); if (!s.def && ri === 0) tr.className = 'first'; if ((tab === 'pods' && highlight && highlight.type === 'pod' && highlight.site === r.site && highlight.pod === r.pod) || (tab === 'planes' && highlight && highlight.type === 'plane' && highlight.site === r.site && highlight.plane === r.plane) || ((tab === 'spines' || tab === 'supers') && r.id === selectedId)) tr.className = (tr.className ? tr.className + ' ' : '') + 'sel'; cols.forEach(c => { const td = document.createElement('td'); if (!s.def && s.k === c.k) td.className = 'sortedcol'; if (c.key) td.className = (td.className ? td.className + ' ' : '') + 'key'; td.textContent = r[c.k]; td.title = c.title || ''; tr.appendChild(td); }); tr.onclick = () => onRow(tab, r); tb.appendChild(tr); }); t.appendChild(tb); return t; }
+      function onRow(tab, r) { if (tab === 'spines' || tab === 'supers') { kit.select(r.id); return; } if (tab === 'pods') { const same = highlight && highlight.type === 'pod' && highlight.site === r.site && highlight.pod === r.pod; highlight = same ? null : { type: 'pod', site: r.site, pod: r.pod }; applyColors(); renderTables(); if (highlight) focusDevices(spines.filter(d => d.site === r.site && d.pod === r.pod), r.site); else fitAll(); return; } if (tab === 'planes') { const same = highlight && highlight.type === 'plane' && highlight.site === r.site && highlight.plane === r.plane; highlight = same ? null : { type: 'plane', site: r.site, plane: r.plane }; applyColors(); renderTables(); if (highlight) focusDevices(spines.filter(d => d.site === r.site && d.plane === r.plane).concat(supers.filter(d => d.site === r.site && d.plane === r.plane)), r.site); else fitAll(); } }
+      function renderTabs() { tabBar.innerHTML = ''; [['spines', 'Spines'], ['pods', 'Pods'], ['planes', 'Planes'], ['supers', 'Super-spines']].forEach(([k, label]) => { const b = document.createElement('button'); b.className = P + 'tab' + (activeTab === k ? ' on' : ''); b.textContent = label; b.onclick = () => { activeTab = k; renderTables(); }; tabBar.appendChild(b); }); }
+      function renderTables() { if (guideHidden) guide.style.display = 'none'; renderTabs(); subtitle.textContent = activeTab === 'spines' ? 'Spines: one row per spine: click a column to rank spines' : activeTab === 'pods' ? 'Pods: one row per pod: click a row to highlight its spines' : activeTab === 'planes' ? 'Planes: one row per plane (per site): click a row to highlight it' : 'Super-spines: one row per super-spine: click to select it'; scroll.innerHTML = ''; const rows = sortRows(tabRows(activeTab), activeTab); countEl.textContent = rows.length + ' rows shown'; const h = document.createElement('h3'); h.textContent = (activeTab === 'spines' || activeTab === 'supers') ? 'Click header to sort · click row to select' : 'Click header to sort · click row to highlight in 3D'; scroll.append(h, buildTable(activeTab, rows)); }
+      renderTables();
+      const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
+      function pick(e) { const rect = renderer.domElement.getBoundingClientRect(); mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1; mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1; ray.setFromCamera(mouse, camera); let hit = ray.intersectObject(spineMesh); if (hit.length) return spineIds[hit[0].instanceId]; hit = ray.intersectObject(superMesh); if (hit.length) return superIds[hit[0].instanceId]; return null; }
+      function pickSite(e) { const rect = renderer.domElement.getBoundingClientRect(); mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1; mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1; ray.setFromCamera(mouse, camera); const hit = ray.intersectObjects(deckMeshes); return hit.length ? hit[0].object.userData.site : null; }
+      function placeTip(e) { const rect = root.getBoundingClientRect(); tip.style.left = (e.clientX - rect.left + 14) + 'px'; tip.style.top = (e.clientY - rect.top + 10) + 'px'; tip.style.display = 'block'; renderer.domElement.style.cursor = 'pointer'; }
+      function onMove(e) { const id = pick(e); if (!id) { const code = pickSite(e); if (!code) { tip.style.display = 'none'; renderer.domElement.style.cursor = ''; return; } const ps = AGG.pods.filter(p => p.site === code); tip.innerHTML = '<b>' + kit.siteName(code) + ' (' + code + ')</b><br>pods: ' + ps.length + '<br>spines: ' + spines.filter(d => d.site === code).length + ' · super-spines: ' + supers.filter(d => d.site === code).length; placeTip(e); return; } const d = byId.get(id); if (!d) return; if (d.tier === 'spine') { const inf = spineInfo.get(id); tip.innerHTML = '<b>' + id + '</b><br>spine · ' + kit.siteName(d.site) + ' · pod ' + d.pod + ' · plane ' + d.plane + '<br>uplinks: ' + inf.uplinks + ' · broken: ' + inf.broken + ' (partly ' + inf.part + ', fully ' + inf.full + ')<br>links up: ' + inf.up + '/' + inf.tot + (d.drained ? '<br><span style="color:#b48cff">drained</span>' : ''); } else { const inf = superInfo.get(id); tip.innerHTML = '<b>' + id + '</b><br>super-spine · ' + kit.siteName(d.site) + ' · plane ' + d.plane + '<br>downlinks: ' + inf.downlinks + ' · broken: ' + inf.broken + ' (partly ' + inf.part + ', fully ' + inf.full + ')' + (d.drained ? '<br><span style="color:#b48cff">drained</span>' : ''); } placeTip(e); }
+      function onClick(e) { const id = pick(e); if (id) { kit.select(id); return; } const code = pickSite(e); if (code) { activeSite = code; renderSiteBtns(); applyColors(); focusSite(code); renderTables(); } }
+      renderer.domElement.addEventListener('pointermove', onMove); renderer.domElement.addEventListener('click', onClick);
+      kit.onSelect(id => { selectedId = id; const d = id ? byId.get(id) : null; if (d && (d.tier === 'spine' || d.tier === 'super_spine')) { if (activeSite && d.site !== activeSite) { activeSite = d.site; renderSiteBtns(); } selBox.visible = true; } if (id) focusDevice(id); else selBox.visible = false; applyColors(); renderTables(); });
+      function resize() { const w = el.clientWidth || root.clientWidth || 800, h = el.clientHeight || root.clientHeight || 600; renderer.setSize(w, h); const pw = w > 900 ? 560 : 0; camera.aspect = (w + pw) / h; camera.setViewOffset(w + pw, h, pw, 0, w, h); camera.updateProjectionMatrix(); }
+      const onWin = () => resize(); window.addEventListener('resize', onWin); resize();
+      (function () { const b = sysBounds(); const dist = Math.max(b.span * 0.98, 16); camera.position.set(b.cx + dist * 0.5, dist * 0.78, b.cz + dist * 0.72); controls.target.set(b.cx, 0, b.cz); controls.update(); })();
+      applyColors(); if (kit.selected) { selectedId = kit.selected; focusDevice(kit.selected); applyColors(); }
+      let raf = 0; const clock = new THREE.Clock();
+      function animate() { raf = requestAnimationFrame(animate); const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime; if (fly.active) { fly.t += dt / fly.dur; const k = fly.t >= 1 ? 1 : (1 - Math.pow(1 - fly.t, 3)); camera.position.lerpVectors(fly.fromP, fly.toP, k); controls.target.lerpVectors(fly.fromT, fly.toT, k); if (fly.t >= 1) fly.active = false; } if (!reduced) { if (stars) stars.rotation.y += dt * 0.004; const p = 0.72 + 0.28 * Math.sin(t * 2.2); sunGlow.scale.set(12 + 2.2 * p, 12 + 2.2 * p, 1); fullLines.material.opacity = 0.65 + 0.35 * Math.sin(t * 4); if (cylMesh) cylMesh.material.opacity = 0.75 + 0.25 * Math.sin(t * 4); ringMats.forEach((m, i) => { m.opacity = 0.22 + 0.1 * Math.sin(t * 1.3 + i); }); selBox.material.opacity = 0.6 + 0.4 * Math.sin(t * 3); } controls.update(); renderer.render(scene, camera); }
+      animate();
+      cleanup = function () { cancelAnimationFrame(raf); window.removeEventListener('resize', onWin); renderer.domElement.removeEventListener('pointermove', onMove); renderer.domElement.removeEventListener('click', onClick); controls.dispose(); scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (m.map) m.map.dispose(); m.dispose(); }); } }); renderer.dispose(); if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement); };
+      cleanup.__resize = resize;
+    }
   };
 });
+
+

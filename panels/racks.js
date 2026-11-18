@@ -55,11 +55,12 @@ kit.page('racks', function () {
     mount(el, model, kit) {
       disposePrev(); el.innerHTML = '';
       const P = 'rk-';
-      const C = { healthy: '#2b3644', partly: '#ffb347', fully: '#ff4d6d', drained: '#b48cff', empty: '#5ee7ff', spine: '#7dd3fc', accent: '#5ee7ff' };
+      const C = { healthy: '#3f8f66', partly: '#ffb347', fully: '#ff4d6d', drained: '#b48cff', empty: '#5ee7ff', spine: '#7dd3fc', accent: '#5ee7ff' };
       const style = document.createElement('style');
       style.textContent = `
 .rk-root{position:absolute;inset:0;background:#03040a;color:#dbe7f3;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}
 .rk-canvas{position:absolute;inset:0}.rk-canvas canvas{display:block}
+.rk-finder{display:flex;flex-wrap:wrap;gap:5px;padding:4px 10px 6px;align-items:center}.rk-finder-h{font-size:12px;color:#e6f0ff;font-weight:600;margin-right:4px}.rk-qbtn{background:rgba(63,143,102,.18);color:#d9f5e6;border:1px solid rgba(155,231,185,.35);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;transition:background .15s}.rk-qbtn:hover{background:rgba(63,143,102,.35)}.rk-qbtn.on{background:#3f8f66;color:#fff;border-color:#9be7b9}
 .rk-legend,.rk-title{position:absolute;z-index:5;background:rgba(10,14,30,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(120,200,255,.25);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.35);padding:9px 11px;font-size:11px;line-height:1.55}
 .rk-legend{left:10px;bottom:10px;max-width:240px}.rk-title{left:10px;top:10px;font-size:12px}
 .rk-legend b,.rk-title b{color:#e6f0ff;font-weight:600;font-size:12px}
@@ -109,15 +110,15 @@ kit.page('racks', function () {
       const spines = model.devices.filter(d => d.tier === 'spine');
       let totBroken = 0, totPart = 0, totFull = 0, totDrained = 0;
       racks.forEach(d => { const i = rackInfo.get(d.id); totBroken += i.broken; totPart += i.part; totFull += i.full; if (d.drained) totDrained++; });
-      legend.innerHTML = '<b>Legend</b><br>' +
-        '<span class="' + P + 'sw" style="background:' + C.healthy + ';box-shadow:inset 0 0 0 1px rgba(94,231,255,.35)"></span>healthy rack<br>' +
-        '<span class="' + P + 'sw" style="background:' + C.partly + '"></span>partly broken uplink<br>' +
-        '<span class="' + P + 'sw" style="background:' + C.fully + '"></span>fully broken uplink<br>' +
-        '<span class="' + P + 'sw" style="background:' + C.drained + '"></span>drained rack (violet + ring on top)<br>' +
-        '<span class="' + P + 'sw" style="background:transparent;border:1px dashed ' + C.empty + '"></span>empty slot (no rack)<br>' +
-        '<span class="' + P + 'sw" style="background:' + C.spine + '"></span>spine (satellite above pod)<br>' +
-        '<span style="color:#6b7f99">— healthy link (faint)</span> &nbsp;<span style="color:' + C.partly + '">— partly</span> &nbsp;<span style="color:' + C.fully + '">— fully</span><br>' +
-        '<b style="color:#dbe7f3;text-transform:none;letter-spacing:0">Broken rack uplinks: ' + totBroken + '</b> · Partly: ' + totPart + '<br>Fully: ' + totFull + ' · Drained: ' + totDrained;
+      legend.innerHTML = '<b>What the colors mean</b><br>' +
+        '<span class="' + P + 'sw" style="background:' + C.healthy + '"></span><b style="color:#9be7b9">Connected</b>: all links work<br>' +
+        '<span class="' + P + 'sw" style="background:' + C.partly + '"></span><b style="color:' + C.partly + '">Partly connected</b>: some links down<br>' +
+        '<span class="' + P + 'sw" style="background:' + C.fully + '"></span><b style="color:' + C.fully + '">Not connected</b>: a link is fully down<br>' +
+        '<span class="' + P + 'sw" style="background:' + C.drained + '"></span><b style="color:' + C.drained + '">Turned off</b> on purpose (drained)<br>' +
+        '<span class="' + P + 'sw" style="background:transparent;border:1px dashed ' + C.empty + '"></span>Empty spot: no rack here<br>' +
+        '<span class="' + P + 'sw" style="background:' + C.spine + '"></span>Spine switch (floats above its pod)<br>' +
+        '<span style="color:#8aa0bd">Red/orange beams = broken links up to a spine</span><br>' +
+        '<span style="color:#dbe7f3">Broken rack links: <b>' + totBroken + '</b> · partly: ' + totPart + ' · fully: ' + totFull + ' · turned off: ' + totDrained + '</span>';
 
       // ---- solar layout ----
       const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -221,7 +222,7 @@ kit.page('racks', function () {
       function highlightTest(d) { if (!highlight) return true; if (highlight.type === 'pod') return d.site === highlight.site && d.pod === highlight.pod; if (highlight.type === 'row') return d.site === highlight.site && (d.row || 1) === highlight.row; if (highlight.type === 'site') return d.site === highlight.site; return true; }
       function applyColors() {
         racks.forEach((d, i) => { const inf = rackInfo.get(d.id); let col;
-          if (d.drained) col = new THREE.Color(0xb48cff); else if (inf.full > 0) col = new THREE.Color(0xff4d6d); else if (inf.part > 0) col = new THREE.Color(0xffb347); else col = new THREE.Color(0x2b3644);
+          if (d.drained) col = new THREE.Color(0xb48cff); else if (inf.full > 0) col = new THREE.Color(0xff4d6d); else if (inf.part > 0) col = new THREE.Color(0xffb347); else col = new THREE.Color(0x3f8f66);
           const dimmed = (onlyBroken && inf.broken === 0 && !d.drained) || !highlightTest(d) || (activeSite && d.site !== activeSite);
           if (dimmed) col.multiplyScalar(0.16); if (d.id === selectedId) col = new THREE.Color(0xffffff); rackMesh.setColorAt(i, col);
           const v = pos.get(d.id); dummy.position.copy(v); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, inf.full > 0 && !dimmed ? 1.3 : 1, 1); dummy.updateMatrix(); rackMesh.setMatrixAt(i, dummy.matrix); });
@@ -237,7 +238,7 @@ kit.page('racks', function () {
       side.innerHTML = '';
       let guideHidden = false;
       const guide = document.createElement('div'); guide.className = P + 'guide';
-      guide.innerHTML = '<span><b>How to answer:</b> 1 Pick a tab &nbsp;·&nbsp; 2 Click the column the question asks about &nbsp;·&nbsp; 3 Read the top row (click it to see it in 3D)</span>';
+      guide.innerHTML = '<span><b>How to answer a question:</b> tap the button that matches it, then read the <b>top row</b>. Tap that row to see it in 3D.</span>';
       const guideX = document.createElement('button'); guideX.className = P + 'guide-x'; guideX.textContent = '×'; guideX.title = 'Hide guide'; guideX.onclick = () => { guideHidden = true; guide.style.display = 'none'; };
       guide.appendChild(guideX);
       const btnWrap = document.createElement('div'); btnWrap.className = P + 'btns';
@@ -250,7 +251,8 @@ kit.page('racks', function () {
       const tabBar = document.createElement('div'); tabBar.className = P + 'tabs';
       const subtitle = document.createElement('div'); subtitle.className = P + 'subtitle';
       const scroll = document.createElement('div'); scroll.className = P + 'scroll';
-      side.append(guide, btnWrap, toggleLabel, filterRow, tabBar, subtitle, scroll);
+      const finder = document.createElement('div'); finder.className = P + 'finder';
+      side.append(guide, finder, btnWrap, toggleLabel, filterRow, tabBar, subtitle, scroll);
       filterInput.addEventListener('input', () => renderTables());
       toggleLabel.querySelector('input').addEventListener('change', e => { onlyBroken = e.target.checked; applyColors(); renderTables(); });
       function renderSiteBtns() { btnWrap.innerHTML = ''; const mk = (code) => { const b = document.createElement('button'); b.className = P + 'btn' + (activeSite === code ? ' on' : ''); b.innerHTML = code ? '<span class="' + P + 'sname">' + kit.siteName(code) + '</span><span class="' + P + 'scode">' + code + '</span>' : '<span class="' + P + 'sname">All sites</span>'; b.style.cursor = 'pointer'; b.onclick = () => { activeSite = code; renderSiteBtns(); applyColors(); focusSite(code); renderTables(); }; btnWrap.appendChild(b); }; mk(null); siteCodes.forEach(c => mk(c)); const rb = document.createElement('button'); rb.className = P + 'btn'; rb.textContent = 'Reset view'; rb.style.cursor = 'pointer'; rb.onclick = () => { activeSite = null; highlight = null; renderSiteBtns(); applyColors(); fitAll(); renderTables(); }; btnWrap.appendChild(rb); }
@@ -277,13 +279,16 @@ kit.page('racks', function () {
       }
       function renderTabs() { tabBar.innerHTML = ''; [['pods', 'Pods'], ['rows', 'Rows'], ['sites', 'Sites'], ['racks', 'Racks']].forEach(([k, label]) => { const b = document.createElement('button'); b.className = P + 'tab' + (activeTab === k ? ' on' : ''); b.textContent = label; b.style.cursor = 'pointer'; b.onclick = () => { activeTab = k; renderTables(); }; tabBar.appendChild(b); }); }
       function renderTables() { if (guideHidden) guide.style.display = 'none'; renderTabs(); subtitle.textContent = activeTab === 'pods' ? 'Pods: one row per pod: click a column to rank pods' : activeTab === 'rows' ? 'Rows: one row per hall row (per site)' : activeTab === 'sites' ? 'Sites: one row per site (planet)' : 'Racks: one row per rack: click to select it'; scroll.innerHTML = ''; const rows = sortRows(tabRows(activeTab), activeTab); countEl.textContent = rows.length + ' rows shown'; const h = document.createElement('h3'); h.textContent = activeTab === 'racks' ? 'Per rack · click row to select' : 'Click header to sort · click row to highlight in 3D'; scroll.append(buildTable(activeTab, rows)); }
+      const QUICK = [['Pods by racks with a broken link', 'pods', 'racksBroken'], ['Rows by racks with a broken link', 'rows', 'racksBroken'], ['Sites by racks with a broken link', 'sites', 'racksBroken'], ['Racks by broken links', 'racks', 'broken'], ['Pods by broken links', 'pods', 'brokenUplinks'], ['Sites by turned-off racks', 'sites', 'drained'], ['Pods by empty spots', 'pods', 'empty'], ['Sites by empty spots', 'sites', 'empty']];
+      finder.innerHTML = '<div class="' + P + 'finder-h">Rank…</div>';
+      QUICK.forEach(([label, tab, k]) => { const b = document.createElement('button'); b.className = P + 'qbtn'; b.textContent = label; b.onclick = () => { activeTab = tab; sorts[tab].k = k; sorts[tab].def = false; sorts[tab].dir = -1; finder.querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); renderTables(); scroll.scrollTop = 0; }; finder.appendChild(b); });
       renderTables();
       // ---- interaction ----
       const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
       function pick(e) { const rect = renderer.domElement.getBoundingClientRect(); mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1; mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1; ray.setFromCamera(mouse, camera); let hit = ray.intersectObject(rackMesh); if (hit.length) return idByInstance[hit[0].instanceId]; hit = ray.intersectObject(spineMesh); if (hit.length) return spineIds[hit[0].instanceId]; return null; }
       function pickSite(e) { const rect = renderer.domElement.getBoundingClientRect(); mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1; mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1; ray.setFromCamera(mouse, camera); const hit = ray.intersectObjects(deckMeshes); return hit.length ? hit[0].object.userData.site : null; }
       function placeTip(e) { const rect = root.getBoundingClientRect(); tip.style.left = (e.clientX - rect.left + 14) + 'px'; tip.style.top = (e.clientY - rect.top + 10) + 'px'; tip.style.display = 'block'; renderer.domElement.style.cursor = 'pointer'; }
-      function onMove(e) { const id = pick(e); if (!id) { const code = pickSite(e); if (!code) { tip.style.display = 'none'; renderer.domElement.style.cursor = ''; return; } const a = AGG.sites.find(s => s.site === code); tip.innerHTML = '<b>' + kit.siteName(code) + ' (' + code + ')</b><br>racks: ' + (a ? a.racks : 0) + '<br>racks w/ broken uplink: ' + (a ? a.racksBroken : 0) + '<br>empty slots: ' + (a ? a.empty : 0); placeTip(e); return; } const d = byId.get(id); if (!d) return; const inf = d.tier === 'top_of_rack' ? rackInfo.get(id) : rackStats(kit.uplinks(id)); const u = kit.uplinks(id); tip.innerHTML = '<b>' + id + '</b><br>' + d.tier + ' · ' + kit.siteName(d.site) + (d.pod != null ? ' · pod ' + d.pod : '') + (d.row != null ? ' · row ' + d.row + ' col ' + d.col : '') + '<br>uplinks: ' + u.length + ' · broken: ' + inf.broken + ' (partly ' + inf.part + ', fully ' + inf.full + ')<br>links up: ' + inf.up + '/' + inf.tot + (d.drained ? '<br><span style="color:#b48cff">drained</span>' : ''); placeTip(e); }
+      function onMove(e) { const id = pick(e); if (!id) { const code = pickSite(e); if (!code) { tip.style.display = 'none'; renderer.domElement.style.cursor = ''; return; } const a = AGG.sites.find(s => s.site === code); tip.innerHTML = '<b>' + kit.siteName(code) + ' (' + code + ')</b><br>racks: ' + (a ? a.racks : 0) + '<br>racks w/ broken uplink: ' + (a ? a.racksBroken : 0) + '<br>empty slots: ' + (a ? a.empty : 0); placeTip(e); return; } const d = byId.get(id); if (!d) return; const inf = d.tier === 'top_of_rack' ? rackInfo.get(id) : rackStats(kit.uplinks(id)); const u = kit.uplinks(id); const st = d.drained ? '<span style="color:#b48cff">Turned off on purpose</span>' : inf.full > 0 ? '<span style="color:#ff4d6d">Not connected: a link is fully down</span>' : inf.part > 0 ? '<span style="color:#ffb347">Partly connected: some links down</span>' : '<span style="color:#9be7b9">Connected: all links work</span>'; tip.innerHTML = '<b>' + id + '</b><br>' + st + '<br>' + inf.up + ' of ' + inf.tot + ' links working · ' + inf.broken + ' of ' + u.length + ' uplinks broken<br><span style="color:#8aa0bd">' + (d.tier === 'top_of_rack' ? 'rack' : d.tier.replace('_', ' ')) + ' · ' + kit.siteName(d.site) + (d.pod != null ? ' · pod ' + d.pod : '') + (d.row != null ? ' · row ' + d.row + ', col ' + d.col : '') + '</span>'; placeTip(e); }
       function onClick(e) { const id = pick(e); if (id) { kit.select(id); return; } const code = pickSite(e); if (code) { activeSite = code; renderSiteBtns(); applyColors(); focusSite(code); renderTables(); } }
       renderer.domElement.addEventListener('pointermove', onMove); renderer.domElement.addEventListener('click', onClick);
       kit.onSelect(id => { selectedId = id; if (id) focusDevice(id); else selBox.visible = false; applyColors(); renderTables(); });
